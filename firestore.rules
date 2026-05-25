@@ -161,6 +161,26 @@ service cloud.firestore {
         request.auth.token.admin == true;
     }
     
+    // Stories — user's own story sessions
+    match /stories/{storyId} {
+      allow read: if request.auth != null && request.auth.uid == resource.data.userId;
+      allow create: if request.auth != null;
+      allow update: if request.auth != null && request.auth.uid == resource.data.userId;
+      allow delete: if false;
+    }
+
+    // Story prompts — readable by authenticated users; written only via seed script
+    match /story_prompts/{promptId} {
+      allow read: if request.auth != null;
+      allow write: if false;
+    }
+
+    // Warmup scenarios — readable by authenticated users; written only via seed script
+    match /warmup_scenarios/{scenarioId} {
+      allow read: if request.auth != null;
+      allow write: if false;
+    }
+
     // Catch-all deny rule - IMPORTANT: This must be last
     match /{document=**} {
       allow read, write: if false;
