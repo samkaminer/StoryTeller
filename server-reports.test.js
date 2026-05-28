@@ -91,6 +91,7 @@ describe('server-reports', () => {
                 answer: 'A1',
                 timestamp: '2024-01-01T00:00:00.000Z',
                 audio_signed_url: 'https://signed-url.com',
+                video_signed_url: null,
                 word_timestamps: null
             });
         });

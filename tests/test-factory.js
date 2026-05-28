@@ -5,7 +5,7 @@ let mockServer = null;
 let mockIo = null;
 
 // Factory function to create server app for testing
-function createTestApp(serverPath = '../server_staging.js') {
+function createTestApp(serverPath = '../server.js') {
   // Clear the require cache to ensure fresh imports
   Object.keys(require.cache).forEach(key => {
     if (key.includes('server') || key.includes('src/') || key.includes('memoryService') || key.includes('pricingService')) {

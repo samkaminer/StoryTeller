@@ -3066,6 +3066,114 @@ ${interview.content || 'No content available'}`
         }
     });
 
+    socket.on('startFinalTelling', async ({ storyId } = {}) => {
+        if (!storyId) {
+            socket.emit('finalTellingError', { message: 'Missing storyId' });
+            return;
+        }
+
+        const finalReportId = uuidv4();
+        const finalResponseDocId = uuidv4();
+
+        sessionData.set(sessionId, {
+            persistentSessionId: finalReportId,
+            storyId,
+            mode: 'final_telling',
+            finalResponseDocId,
+            currentTranscription: '',
+            currentWordTimestamps: [],
+            interviewResponses: [],
+            assistantQuestions: [],
+            totalRecordingDuration: 0,
+            enableWebSearch: false,
+            enableThinking: false,
+            enableMemoryService: false,
+            interviewId: null,
+        });
+
+        let interviewId = null;
+
+        if (db) {
+            try {
+                const storyDoc = await db.collection('stories').doc(storyId).get();
+                if (storyDoc.exists) {
+                    const interviewReportId = storyDoc.data().interviewReportId;
+                    if (interviewReportId) {
+                        const reportDoc = await db.collection('reports').doc(interviewReportId).get();
+                        if (reportDoc.exists) interviewId = reportDoc.data().interview_id || null;
+                    }
+                }
+            } catch (err) {
+                console.error(`[${sessionId}] startFinalTelling: DB lookup error:`, err.message);
+            }
+
+            try {
+                await db.collection('reports').doc(finalReportId).set({
+                    persistent_session_id: finalReportId,
+                    socket_session_id: sessionId,
+                    interview_id: interviewId,
+                    story_id: storyId,
+                    report_type: 'final_telling',
+                    status: 'recording',
+                    start_timestamp: admin.firestore.FieldValue.serverTimestamp(),
+                    total_recording_duration: 0,
+                });
+                await db.collection('reports').doc(finalReportId)
+                    .collection('responses').doc(finalResponseDocId).set({
+                        response_id: finalResponseDocId,
+                        persistent_session_id: finalReportId,
+                        interview_id: interviewId,
+                        story_id: storyId,
+                        question: 'Final Telling',
+                        answer: null,
+                        word_timestamps: null,
+                        timestamp: admin.firestore.FieldValue.serverTimestamp(),
+                    });
+            } catch (err) {
+                console.error(`[${sessionId}] startFinalTelling: Firestore write error:`, err.message);
+            }
+        }
+
+        sessionData.get(sessionId).interviewId = interviewId;
+        console.log(`[${sessionId}] startFinalTelling ready: reportId=${finalReportId}, interviewId=${interviewId}`);
+        socket.emit('finalTellingReady', { reportId: finalReportId, responseDocId: finalResponseDocId, interviewId });
+    });
+
+    socket.on('stopFinalTelling', async () => {
+        const sessionInfo = sessionData.get(sessionId);
+        if (!sessionInfo || sessionInfo.mode !== 'final_telling') return;
+
+        const { storyId, persistentSessionId: finalReportId, finalResponseDocId } = sessionInfo;
+        const wordTimestamps = sessionInfo.currentWordTimestamps || [];
+        const rawTranscription = (sessionInfo.currentTranscription || '').trim();
+        const finalTranscript = wordTimestamps.length > 0
+            ? assembleTranscriptWithPauses(wordTimestamps)
+            : rawTranscription;
+
+        if (db) {
+            try {
+                if (finalTranscript || wordTimestamps.length > 0) {
+                    await db.collection('reports').doc(finalReportId)
+                        .collection('responses').doc(finalResponseDocId)
+                        .update({ answer: finalTranscript, word_timestamps: wordTimestamps });
+                }
+                await db.collection('reports').doc(finalReportId).update({ status: 'awaiting_upload' });
+                if (storyId) {
+                    await db.collection('stories').doc(storyId).update({
+                        finalReportId,
+                        status: 'final_recorded',
+                        finalRecordedAt: admin.firestore.FieldValue.serverTimestamp(),
+                    });
+                }
+                console.log(`[${sessionId}] stopFinalTelling: Firestore updated for storyId=${storyId}`);
+            } catch (err) {
+                console.error(`[${sessionId}] stopFinalTelling: Firestore update error:`, err.message);
+            }
+        }
+
+        socket.emit('finalTellingEnded', { reportId: finalReportId });
+    });
+
     // New event for when client is ready at the report page
     socket.on('requestReport', async (previousSessionId) => {
         // Use the provided session ID or fallback to current socket ID
@@ -3489,10 +3597,18 @@ ${interview.content || 'No content available'}`
 
             // generateNextQuestion is also in the scope of io.on('connection', (socket) => { ... })
             // and uses the 'socket' variable from that scope.
-            await generateNextQuestion(finalTranscript); 
+            if (sessionInfoToProcess.mode === 'final_telling') {
+                console.log(`[${currentSessionId}] Final telling mode — skipping generateNextQuestion.`);
+            } else {
+                await generateNextQuestion(finalTranscript);
+            }
         } else {
             console.warn(`[${currentSessionId}] No final transcript from Deepgram to process (via ${contextSource}).`);
-            await generateNextQuestion(null); 
+            if (sessionInfoToProcess.mode === 'final_telling') {
+                console.log(`[${currentSessionId}] Final telling mode — skipping generateNextQuestion (empty transcript).`);
+            } else {
+                await generateNextQuestion(null);
+            }
         }
         
         // Reset for next turn
@@ -5922,14 +6038,19 @@ app.post('/api/claude', requireAuth, async (req, res) => {
         
         // Validate userId exists
         if (!userId) {
-            console.error('[/api/claude] Missing user ID in request:', { 
-                user: req.user, 
+            console.error('[/api/claude] Missing user ID in request:', {
+                user: req.user,
                 sessionUserId: req.session?.userId,
-                sessionEmail: req.session?.email 
+                sessionEmail: req.session?.email
             });
             return res.status(401).json({ error: 'User ID not found. Please log in again.' });
         }
-        
+
+        // Validate messages
+        if (!messages || !Array.isArray(messages) || messages.length === 0) {
+            return res.status(400).json({ error: 'Messages are required' });
+        }
+
         // Check if user has reached the free tier message limit for analyst/copilot
         const FREE_TIER_ANALYST_LIMIT = 10; // 10 messages for free tier users
         
@@ -6682,40 +6803,42 @@ server.keepAliveTimeout = 65000; // 65 seconds (should be higher than proxy time
 server.headersTimeout = 66000; // 66 seconds (slightly higher than keepAliveTimeout)
 server.timeout = 300000; // 5 minutes for long-running requests
 
-// Modify the server.listen to work with Vercel
-try {
-  server.listen(PORT, () => {
-    console.log('=== SERVER STARTED SUCCESSFULLY ===');
-    console.log(`Server running on http://localhost:${PORT}`);
-    console.log(`Static files being served from: ${path.join(__dirname, 'public')}`);
-    console.log(`Ready to handle Claude API requests`);
-    console.log(`Ready to handle voice interviews`);
-    console.log('');
-    console.log('Service Status Summary:');
-    console.log(`- Firebase: ${db ? '✓ Connected' : '✗ Not connected'}`);
-    console.log(`- Google Cloud Storage: ${storage ? '✓ Connected' : '✗ Not connected'}`);
-    console.log(`- Email Service: ${SENDGRID_API_KEY || process.env.GMAIL_CLIENT_ID ? '✓ Available' : '✗ Not configured'}`);
-    console.log(`- Stripe: ${stripe ? '✓ Connected' : '✗ Not connected'}`);
-    
-    // Start campaign email sender if Firebase is available
-    if (db) {
-      const campaignSender = require('./server/utils/campaign-sender');
-      campaignSender.start();
-      console.log(`- Campaign Sender: ✓ Started`);
-    } else {
-      console.log(`- Campaign Sender: ✗ Not started (requires Firebase)`);
-    }
-    
-    console.log('');
-    console.log('Visit /health for detailed status information');
-    console.log('=================================');
-  });
-} catch (error) {
-  console.error('CRITICAL ERROR starting server:', error);
-  console.error('Error type:', error.constructor.name);
-  console.error('Error message:', error.message);
-  console.error('Stack trace:', error.stack);
-  process.exit(1);
+// Only bind when run directly — not when required by tests or Vercel serverless
+if (require.main === module) {
+  try {
+    server.listen(PORT, () => {
+      console.log('=== SERVER STARTED SUCCESSFULLY ===');
+      console.log(`Server running on http://localhost:${PORT}`);
+      console.log(`Static files being served from: ${path.join(__dirname, 'public')}`);
+      console.log(`Ready to handle Claude API requests`);
+      console.log(`Ready to handle voice interviews`);
+      console.log('');
+      console.log('Service Status Summary:');
+      console.log(`- Firebase: ${db ? '✓ Connected' : '✗ Not connected'}`);
+      console.log(`- Google Cloud Storage: ${storage ? '✓ Connected' : '✗ Not connected'}`);
+      console.log(`- Email Service: ${SENDGRID_API_KEY || process.env.GMAIL_CLIENT_ID ? '✓ Available' : '✗ Not configured'}`);
+      console.log(`- Stripe: ${stripe ? '✓ Connected' : '✗ Not connected'}`);
+
+      // Start campaign email sender if Firebase is available
+      if (db) {
+        const campaignSender = require('./server/utils/campaign-sender');
+        campaignSender.start();
+        console.log(`- Campaign Sender: ✓ Started`);
+      } else {
+        console.log(`- Campaign Sender: ✗ Not started (requires Firebase)`);
+      }
+
+      console.log('');
+      console.log('Visit /health for detailed status information');
+      console.log('=================================');
+    });
+  } catch (error) {
+    console.error('CRITICAL ERROR starting server:', error);
+    console.error('Error type:', error.constructor.name);
+    console.error('Error message:', error.message);
+    console.error('Stack trace:', error.stack);
+    process.exit(1);
+  }
 }
 
 // Export the Express app for Vercel

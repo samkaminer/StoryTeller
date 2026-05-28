@@ -2,6 +2,8 @@ const request = require('supertest');
 const { createTestApp, closeTestServer, clearAllMocks } = require('../../test-factory');
 const memoryService = require('../../../memoryService');
 
+const AUTH_HEADER = { Authorization: 'Bearer test-token' };
+
 describe('Memory Management API Endpoints', () => {
   let app, server;
 
@@ -22,7 +24,7 @@ describe('Memory Management API Endpoints', () => {
   describe('GET /api/memories', () => {
     it('should require userEmail parameter', async () => {
       const response = await request(app)
-        .get('/api/memories')
+        .get('/api/memories').set(AUTH_HEADER)
         .expect(400);
 
       expect(response.body).toHaveProperty('error', 'userEmail is required');
@@ -43,7 +45,7 @@ describe('Memory Management API Endpoints', () => {
       ]);
 
       const response = await request(app)
-        .get('/api/memories')
+        .get('/api/memories').set(AUTH_HEADER)
         .query({ userEmail: 'test@example.com' })
         .expect(200);
 
@@ -62,7 +64,7 @@ describe('Memory Management API Endpoints', () => {
       ]);
 
       const response = await request(app)
-        .get('/api/memories')
+        .get('/api/memories').set(AUTH_HEADER)
         .query({ 
           userEmail: 'test@example.com',
           interviewId: 'interview123'
@@ -80,7 +82,7 @@ describe('Memory Management API Endpoints', () => {
       memoryService.getAll.mockRejectedValue(new Error('Database error'));
 
       const response = await request(app)
-        .get('/api/memories')
+        .get('/api/memories').set(AUTH_HEADER)
         .query({ userEmail: 'test@example.com' })
         .expect(500);
 
@@ -92,7 +94,7 @@ describe('Memory Management API Endpoints', () => {
   describe('DELETE /api/memories', () => {
     it('should require userEmail parameter', async () => {
       const response = await request(app)
-        .delete('/api/memories')
+        .delete('/api/memories').set(AUTH_HEADER)
         .expect(400);
 
       expect(response.body).toHaveProperty('error', 'userEmail is required');
@@ -101,7 +103,7 @@ describe('Memory Management API Endpoints', () => {
     it('should return not implemented status', async () => {
       // According to the code, delete is not yet implemented
       const response = await request(app)
-        .delete('/api/memories')
+        .delete('/api/memories').set(AUTH_HEADER)
         .query({ userEmail: 'test@example.com' })
         .expect(501);
 
@@ -113,7 +115,7 @@ describe('Memory Management API Endpoints', () => {
   describe('POST /api/memories/contextual', () => {
     it('should require all parameters', async () => {
       const response = await request(app)
-        .post('/api/memories/contextual')
+        .post('/api/memories/contextual').set(AUTH_HEADER)
         .send({ userEmail: 'test@example.com' })
         .expect(400);
 
@@ -132,7 +134,7 @@ describe('Memory Management API Endpoints', () => {
       memoryService.getContextualMemories.mockResolvedValue(mockContextualMemories);
 
       const response = await request(app)
-        .post('/api/memories/contextual')
+        .post('/api/memories/contextual').set(AUTH_HEADER)
         .send({
           userEmail: 'test@example.com',
           interviewId: 'interview123',
@@ -151,7 +153,7 @@ describe('Memory Management API Endpoints', () => {
       memoryService.isInitialized.mockReturnValue(false);
 
       const response = await request(app)
-        .post('/api/memories/contextual')
+        .post('/api/memories/contextual').set(AUTH_HEADER)
         .send({
           userEmail: 'test@example.com',
           interviewId: 'interview123',
