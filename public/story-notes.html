@@ -185,9 +185,9 @@
     let unsubscribe = null;
 
     function showView(name) {
-      document.getElementById('view-loading').style.display = name === 'loading' ? '' : 'none';
-      document.getElementById('view-notes').style.display   = name === 'notes'   ? '' : 'none';
-      document.getElementById('view-error').style.display   = name === 'error'   ? '' : 'none';
+      document.getElementById('view-loading').style.display = name === 'loading' ? 'flex'  : 'none';
+      document.getElementById('view-notes').style.display   = name === 'notes'   ? 'block' : 'none';
+      document.getElementById('view-error').style.display   = name === 'error'   ? 'flex'  : 'none';
     }
 
     function setFinalHref(id) {

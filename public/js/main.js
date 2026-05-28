@@ -1743,7 +1743,7 @@ window.storyEndInterview = function () {
     }
     const doEnd = function () {
         if (state.socket && state.socket.instance) {
-            state.socket.instance.emit('stopInterview');
+            state.socket.instance.emit('endStory');
         }
         if (elements.recordBtn) elements.recordBtn.disabled = true;
         const genBtn = document.getElementById('generateReportBtn');

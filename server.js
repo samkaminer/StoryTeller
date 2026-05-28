@@ -2892,7 +2892,7 @@ ${interview.content || 'No content available'}`
                 }
             }
 
-            const redirectUrl = '/story.html?completed=1' + (storyId ? '&storyId=' + encodeURIComponent(storyId) : '');
+            const redirectUrl = '/story-notes.html' + (storyId ? '?storyId=' + encodeURIComponent(storyId) : '');
             socket.emit('redirectToReport', { storyMode: true, redirectUrl });
             // Clean up Deepgram if active
             if (sessionInfo?.deepgramSocket) {
@@ -3007,6 +3007,62 @@ ${interview.content || 'No content available'}`
                 clearInterval(sessionInfo.keepAliveInterval);
                 sessionInfo.keepAliveInterval = null;
             }
+        }
+    });
+
+    socket.on('endStory', async () => {
+        const sessionInfo = sessionData.get(sessionId);
+        const storyId = sessionInfo?.storyId;
+
+        // Deepgram teardown
+        if (sessionInfo?.deepgramSocket) {
+            console.log(`[${sessionId}] endStory: Closing Deepgram socket.`);
+            sessionInfo.deepgramSocket.finish();
+            sessionInfo.deepgramSocket = null;
+            if (sessionInfo.keepAliveInterval) {
+                clearInterval(sessionInfo.keepAliveInterval);
+                sessionInfo.keepAliveInterval = null;
+            }
+        }
+
+        // Save transcript and set status to 'analyzing'
+        if (storyId && db) {
+            try {
+                const questions = (sessionInfo?.assistantQuestions || []).map(q =>
+                    typeof q === 'string' ? q : (q.text || q.question || JSON.stringify(q))
+                );
+                const responses = sessionInfo?.interviewResponses || [];
+                const transcript = [];
+                const maxLen = Math.max(questions.length, responses.length);
+                for (let i = 0; i < maxLen; i++) {
+                    if (questions[i]) transcript.push({ role: 'interviewer', text: questions[i] });
+                    if (responses[i]) transcript.push({ role: 'user', text: responses[i] });
+                }
+                await db.collection('stories').doc(storyId).update({
+                    status: 'analyzing',
+                    transcript,
+                    completedAt: admin.firestore.FieldValue.serverTimestamp(),
+                    interviewReportId: sessionInfo?.persistentSessionId || null,
+                });
+                console.log(`[${sessionId}] endStory: Transcript saved for storyId: ${storyId}`);
+            } catch (err) {
+                console.error(`[${sessionId}] endStory: Failed to save transcript:`, err.message);
+            }
+        }
+
+        // Redirect immediately — story-notes.html polls Firestore while analysis runs
+        socket.emit('redirectToReport', {
+            storyMode: true,
+            redirectUrl: '/story-notes.html' + (storyId ? '?storyId=' + encodeURIComponent(storyId) : '')
+        });
+
+        // Analysis runs in background after redirect
+        try {
+            const storyAnalysis = require('./server/utils/storyAnalysis');
+            storyAnalysis.generateStoryAnalysis(sessionId, storyId, sessionInfo, db, admin)
+                .catch(err => console.error(`[${sessionId}] endStory analysis error:`, err.message));
+        } catch (err) {
+            console.error(`[${sessionId}] endStory: Could not load storyAnalysis module:`, err.message);
         }
     });
 
