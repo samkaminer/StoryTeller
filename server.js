@@ -864,6 +864,34 @@ function countWords(text) {
     return text.trim().split(/\s+/).filter(Boolean).length;
 }
 
+// Assembles a transcript string from Deepgram word objects, inserting [pause] and
+// [long pause] markers wherever the gap between adjacent words exceeds a threshold.
+// This gives Claude visibility into meaningful silences — a pause before a word signals
+// weight; clustered pauses signal a lull; a long pause after charged content signals
+// emotional labor.
+function assembleTranscriptWithPauses(words) {
+    if (!words || words.length === 0) return '';
+
+    const PAUSE_THRESHOLD = 1.5;       // seconds — meaningful conversational pause
+    const LONG_PAUSE_THRESHOLD = 2.5;  // seconds — emotional or significant pause
+
+    let transcript = words[0].punctuated_word || words[0].word || '';
+
+    for (let i = 1; i < words.length; i++) {
+        const gap = words[i].start - words[i - 1].end;
+
+        if (gap >= LONG_PAUSE_THRESHOLD) {
+            transcript += ' [long pause]';
+        } else if (gap >= PAUSE_THRESHOLD) {
+            transcript += ' [pause]';
+        }
+
+        transcript += ' ' + (words[i].punctuated_word || words[i].word || '');
+    }
+
+    return transcript;
+}
+
 // --- START Example Data ---
 const EXAMPLE_RESUME = `Sarah Bennett
  📍 Nashville, TN | 📞 (555) 123-4567 | ✉️ sarah.bennett@email.com | 💼 LinkedIn.com/in/sarahbmarketing
@@ -2725,6 +2753,8 @@ ${interview.content || 'No content available'}`
         sessionData.get(sessionId).enableMemoryService = data.enableMemoryService !== undefined ? data.enableMemoryService : true; // STORE memory service flag, default true
         sessionData.get(sessionId).followupModel = data.followupModel || 'claude-sonnet-4-6'; // STORE followup model, default to Claude Sonnet 4
         sessionData.get(sessionId).enableVideoRecording = data.enableVideoRecording !== undefined ? data.enableVideoRecording : false; // STORE video recording flag, default false
+        if (data.storyId) sessionData.get(sessionId).storyId = data.storyId; // Story mode session ID
+        if (data.mode) sessionData.get(sessionId).mode = data.mode;
 
         // DEBUG: Log what we're actually storing
         console.log('=== DEBUGGING SESSION SETTINGS ===');
@@ -2760,7 +2790,8 @@ ${interview.content || 'No content available'}`
                     total_recording_duration: 0, // Ensure this field is for recording duration
                     report_title: sessionData.get(sessionId).reportHeader || sessionData.get(sessionId).interviewTitle || null, // Use headers or title if available
                     report_subtitle: sessionData.get(sessionId).reportSubheader || sessionData.get(sessionId).interviewDescription || null, // Use subheaders or description if available
-                    utm_params: sessionData.get(sessionId).utmParams || null // Store UTM tracking parameters
+                    utm_params: sessionData.get(sessionId).utmParams || null, // Store UTM tracking parameters
+                    story_id: sessionData.get(sessionId).storyId || null // Story mode association (null for regular interviews)
                 };
                 await reportDocRef.set(initialReportData);
                 console.log(`[${sessionId}] Initial report document created in Firestore with ID: ${persistentSessionId}`);
@@ -2827,11 +2858,53 @@ ${interview.content || 'No content available'}`
     socket.on('stopInterview', async () => {
         // Store the sessionId in a cookie to retrieve it on the report page
         socket.emit('storeSessionId', sessionId);
-        
+
         // Get session info to pass the persistent session ID as report ID
         const sessionInfo = sessionData.get(sessionId);
         const reportId = sessionInfo?.persistentSessionId;
         const interviewId = sessionInfo?.interviewId;
+
+        // ── Story mode: skip Prompter report generation and redirect to story.html ──
+        const isStoryMode = interviewId === 'story-template-v1';
+        if (isStoryMode) {
+            const storyId = sessionInfo?.storyId || null;
+
+            // Save transcript to Firestore story document
+            if (storyId && db) {
+                try {
+                    const questions = (sessionInfo?.assistantQuestions || []).map(q => typeof q === 'string' ? q : (q.text || q.question || JSON.stringify(q)));
+                    const responses = sessionInfo?.interviewResponses || [];
+                    const transcript = [];
+                    const maxLen = Math.max(questions.length, responses.length);
+                    for (let i = 0; i < maxLen; i++) {
+                        if (questions[i]) transcript.push({ role: 'interviewer', text: questions[i] });
+                        if (responses[i]) transcript.push({ role: 'user', text: responses[i] });
+                    }
+                    await db.collection('stories').doc(storyId).update({
+                        status: 'review',
+                        transcript,
+                        completedAt: admin.firestore.FieldValue.serverTimestamp(),
+                        interviewReportId: sessionInfo?.persistentSessionId || null,
+                    });
+                    console.log(`[${sessionId}] Story transcript saved to Firestore for storyId: ${storyId}`);
+                } catch (err) {
+                    console.error(`[${sessionId}] Failed to save story transcript:`, err.message);
+                }
+            }
+
+            const redirectUrl = '/story.html?completed=1' + (storyId ? '&storyId=' + encodeURIComponent(storyId) : '');
+            socket.emit('redirectToReport', { storyMode: true, redirectUrl });
+            // Clean up Deepgram if active
+            if (sessionInfo?.deepgramSocket) {
+                sessionInfo.deepgramSocket.finish();
+                sessionInfo.deepgramSocket = null;
+                if (sessionInfo.keepAliveInterval) {
+                    clearInterval(sessionInfo.keepAliveInterval);
+                    sessionInfo.keepAliveInterval = null;
+                }
+            }
+            return;
+        }
         
         // For testing: if no responses, add minimal test data
         if (sessionInfo && (!sessionInfo.interviewResponses || sessionInfo.interviewResponses.length === 0)) {
@@ -3208,8 +3281,13 @@ ${interview.content || 'No content available'}`
         const transcriptionProcessStartTime = Date.now();
         console.log(`[${currentSessionId}] 🎤 TRANSCRIPTION PROCESSING - Starting at ${new Date().toISOString()} (via ${contextSource})`);
         
-        const finalTranscript = sessionInfoToProcess.currentTranscription.trim();
         const finalWordTimestamps = sessionInfoToProcess.currentWordTimestamps;
+        // Build transcript from word timestamps when available so that [pause] and
+        // [long pause] markers are included for Claude to read. Fall back to the
+        // plain concatenated string if no word-level data exists.
+        const finalTranscript = finalWordTimestamps && finalWordTimestamps.length > 0
+            ? assembleTranscriptWithPauses(finalWordTimestamps)
+            : sessionInfoToProcess.currentTranscription.trim();
 
         // console.log(`[${currentSessionId}] Final combined transcript from Deepgram (via ${contextSource}): "${finalTranscript}"`);
         // console.log(`[${currentSessionId}] Final combined word timestamps count (via ${contextSource}): ${finalWordTimestamps.length}`);
@@ -3397,6 +3475,11 @@ ${interview.content || 'No content available'}`
         sessionInfo.currentTranscription = '';
         sessionInfo.currentWordTimestamps = [];
         
+        if (!deepgramClient) {
+            console.error(`[${sessionId}] Deepgram client not initialized - DEEPGRAM_API_KEY may be missing`);
+            socket.emit('deepgramError', { message: 'Speech transcription is not configured on this server.' });
+            return;
+        }
         try {
             const dgSocketInstance = deepgramClient.listen.live({ // Updated method
                 punctuate: true,

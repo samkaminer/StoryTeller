@@ -280,9 +280,17 @@ function showTimeTargetReachedAlert() {
 
 // Show time limit extended alert
 function showTimeLimitExtendedAlert() {
+    const isStoryMode = new URLSearchParams(window.location.search).get('interview') === 'story-template-v1';
+
     const alertElement = document.createElement('div');
     alertElement.id = 'timeLimitExtendedAlert';
     alertElement.className = 'fixed top-20 right-4 bg-blue-50 dark:bg-blue-900/30 text-blue-700 dark:text-blue-300 p-4 rounded-lg shadow-lg z-50 animate-fade-in border-l-4 border-blue-500 max-w-sm';
+
+    const title = isStoryMode ? 'You\'re in the flow — keep going' : 'Goal Reached & Time Extended!';
+    const body = isStoryMode
+        ? 'You\'ve been sharing for 5 minutes. Stay with it as long as there\'s more to tell. End your session whenever the story feels complete.'
+        : 'You\'ve met the initial 5-minute goal! The recording target has been extended by another 5 minutes. Feel free to continue, or generate your report now.';
+
     alertElement.innerHTML = `
         <div class="flex items-start">
             <div class="flex-shrink-0 text-blue-500">
@@ -291,9 +299,9 @@ function showTimeLimitExtendedAlert() {
                 </svg>
             </div>
             <div class="ml-3">
-                <h3 class="text-sm font-medium">Goal Reached & Time Extended!</h3>
+                <h3 class="text-sm font-medium">${title}</h3>
                 <div class="mt-1 text-sm">
-                    <p>You've met the initial 5-minute goal! The recording target has been extended by another 5 minutes. Feel free to continue, or generate your report now.</p>
+                    <p>${body}</p>
                 </div>
                 <div class="mt-2 flex space-x-2">
                     <button id="dismissExtendedAlertBtn" class="text-sm font-medium text-blue-600 hover:text-blue-500 dark:text-blue-400 dark:hover:text-blue-300">Got it!</button>
