@@ -29,3 +29,8 @@ coverage/
 .claude/
 .agents/
 .obsidian/
+
+# Local screenshot artifacts (output of scripts/screenshot.js)
+screenshot-preview.png
+Screenshot*.png
+
