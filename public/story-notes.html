@@ -208,10 +208,11 @@
     }
 
     function onStoryDoc(doc) {
-      if (!doc.exists) return;
+      if (!doc.exists) { showView('error'); return; }
       const data = doc.data();
 
       if (data.status === 'analyzed') {
+        clearTimeout(analysisTimeout);
         if (unsubscribe) { unsubscribe(); unsubscribe = null; }
 
         const notes = Array.isArray(data.notes) ? data.notes : [];
@@ -222,10 +223,13 @@
           showView('error');
         }
       } else if (data.status === 'error') {
+        clearTimeout(analysisTimeout);
         if (unsubscribe) { unsubscribe(); unsubscribe = null; }
         showView('error');
       }
     }
+
+    let analysisTimeout;
 
     firebase.auth().onAuthStateChanged(user => {
       if (!user) {
@@ -242,7 +246,6 @@
 
       const db = firebase.firestore();
 
-      // Check current state immediately, then listen for changes
       unsubscribe = db.collection('stories').doc(storyId).onSnapshot(
         doc => onStoryDoc(doc),
         err => {
@@ -250,6 +253,11 @@
           showView('error');
         }
       );
+
+      analysisTimeout = setTimeout(() => {
+        if (unsubscribe) { unsubscribe(); unsubscribe = null; }
+        showView('error');
+      }, 5 * 60 * 1000);
     });
 
     document.getElementById('signOutBtn').addEventListener('click', () => {
