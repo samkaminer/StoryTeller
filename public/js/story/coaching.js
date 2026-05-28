@@ -182,6 +182,12 @@
 
     const scenarios = await loadScenarios();
 
+    if (storyId && scenarios.length > 0) {
+      db.collection('stories').doc(storyId).update({
+        warmupScenariosShown: scenarios.map(s => s.id),
+      }).catch(err => console.warn('Could not update warmupScenariosShown:', err));
+    }
+
     showRunway(prompt, () => {
       runScenarioSequence(scenarios, 0, () => {
         showAudienceFrame(() => {
