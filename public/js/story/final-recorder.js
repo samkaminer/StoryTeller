@@ -206,6 +206,14 @@ function attachPreviews() {
   recVid.play().catch(() => {});
 }
 
+function checkLandscape() {
+  const vid = document.getElementById('previewReady');
+  if (vid && vid.videoWidth > 0 && vid.videoHeight > 0 && vid.videoWidth > vid.videoHeight) {
+    const el = document.getElementById('landscapeWarning');
+    if (el) el.style.display = 'block';
+  }
+}
+
 // ── Recording ─────────────────────────────────────────────────────────────────
 function startRecording() {
   stopTriggered = false;
@@ -329,6 +337,7 @@ async function uploadRecording() {
   }
   fd.append('responseDocId', responseDocId);
   fd.append('persistentSessionId', reportId);
+  if (storyId) fd.append('storyId', storyId);
 
   try {
     const res = await fetch(`/api/interviews/${encodeURIComponent(interviewId)}/upload-recording`, {
@@ -390,6 +399,7 @@ async function init() {
   if (!ok) return;
 
   attachPreviews();
+  setTimeout(checkLandscape, 600);
   showView('ready');
 
   document.getElementById('startBtn').addEventListener('click', () => {

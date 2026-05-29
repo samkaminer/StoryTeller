@@ -7733,7 +7733,7 @@ app.post('/api/interviews/:interviewId/upload-recording',
   ]),
   async (req, res) => {
     const interviewId = req.params.interviewId;
-    const { responseDocId, persistentSessionId } = req.body;
+    const { responseDocId, persistentSessionId, storyId } = req.body;
     const audioFile = req.files?.audio?.[0];
     const videoFile = req.files?.video?.[0];
     
@@ -7791,7 +7791,9 @@ app.post('/api/interviews/:interviewId/upload-recording',
         reportId: persistentSessionId,
         socketId: null, // No socket for HTTP upload
         sessionId: sessionId,
-        interviewId: interviewId
+        interviewId: interviewId,
+        storyId: storyId || null,
+        isStoryFinalTelling: !!storyId
       }, (err) => {
         if (err) {
           console.error(`[Recording Upload] Queue error:`, err);
