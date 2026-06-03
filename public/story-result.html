@@ -1,0 +1,794 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>StoryTeller — Your Story</title>
+  <link rel="icon" type="image/png" href="/saylogo.png">
+
+  <script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-auth-compat.js"></script>
+  <script src="js/firebase-config.js"></script>
+
+  <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,400;0,500;0,700;1,400;1,500&family=Inter:wght@300;400;500&display=swap" rel="stylesheet">
+
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --bg:      #F3EDD8;
+      --bg-card: #EAE3CC;
+      --text:    #1C1610;
+      --muted:   #7A6E5B;
+      --border:  #D9D0B8;
+      --ink:     #2C3C6A;
+      --fd:      'Playfair Display', Georgia, serif;
+      --fu:      'Inter', system-ui, sans-serif;
+      --nav:     56px;
+    }
+
+    html, body { height: 100%; background: var(--bg); color: var(--text); font-family: var(--fu); -webkit-font-smoothing: antialiased; overflow-x: hidden; }
+
+    @keyframes fadeUp { from { opacity: 0; transform: translateY(12px); } to { opacity: 1; transform: translateY(0); } }
+    .fade-in { animation: fadeUp 0.4s ease both; }
+    @keyframes pulse { 0%, 100% { opacity: 0.3; transform: scale(0.8); } 50% { opacity: 1; transform: scale(1); } }
+
+    /* ── NAV ─────────────────────────────────────────────────── */
+    .app-nav {
+      position: fixed; top: 0; left: 0; right: 0;
+      height: var(--nav);
+      padding: 0 2rem;
+      display: flex; align-items: center; justify-content: space-between;
+      background: var(--bg);
+      border-bottom: 1px solid var(--border);
+      z-index: 100;
+    }
+    .nav-mark { font-family: var(--fd); font-weight: 700; font-size: 1.0625rem; letter-spacing: -0.01em; }
+    .nav-right { display: flex; align-items: center; gap: 1.25rem; }
+    .nav-link { font-size: 0.875rem; color: var(--muted); text-decoration: none; background: none; border: none; cursor: pointer; transition: color 0.15s; font-family: var(--fu); }
+    .nav-link:hover { color: var(--text); }
+
+    /* ── VIEWS ───────────────────────────────────────────────── */
+    .view {
+      display: none;
+      min-height: 100dvh;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      padding: calc(var(--nav) + 2rem) 1.5rem 4rem;
+    }
+    .view.active { display: flex; }
+
+    /* ── LOADING / PROCESSING ────────────────────────────────── */
+    .page-hl { font-family: var(--fd); font-style: italic; font-size: 1.75rem; font-weight: 400; letter-spacing: -0.02em; margin-bottom: 0.75rem; text-align: center; }
+    .page-sub { font-size: 0.9375rem; color: var(--muted); line-height: 1.65; text-align: center; max-width: 340px; margin-bottom: 2rem; }
+    .pulse-dots { display: flex; gap: 0.5rem; margin-top: 2.5rem; align-items: center; justify-content: center; }
+    .pulse-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--ink); opacity: 0.3; animation: pulse 1.4s ease-in-out infinite; }
+    .pulse-dot:nth-child(2) { animation-delay: 0.2s; }
+    .pulse-dot:nth-child(3) { animation-delay: 0.4s; }
+
+    /* ── RESULT ──────────────────────────────────────────────── */
+    .result-inner {
+      width: 100%; max-width: 400px;
+      display: flex; flex-direction: column; align-items: center;
+      gap: 1.5rem;
+    }
+
+    .video-wrap {
+      width: 100%; max-width: 300px;
+      aspect-ratio: 9 / 16;
+      border-radius: 16px;
+      overflow: hidden;
+      background: #1C1610;
+      flex-shrink: 0;
+    }
+    .video-wrap video { width: 100%; height: 100%; object-fit: cover; display: block; }
+
+    .take-section {
+      width: 100%;
+      max-width: 320px;
+      display: none;
+      flex-direction: column;
+      gap: 0.75rem;
+      align-items: stretch;
+    }
+    .take-section.active { display: flex; }
+    .take-label {
+      font-size: 0.6875rem; font-weight: 500; letter-spacing: 0.1em;
+      text-transform: uppercase; color: var(--ink); text-align: center;
+    }
+    .take-list {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.625rem;
+      justify-content: center;
+    }
+    .take-btn {
+      min-width: 112px;
+      padding: 0.75rem 0.9rem;
+      border-radius: 14px;
+      border: 1px solid var(--border);
+      background: var(--bg-card);
+      color: var(--text);
+      cursor: pointer;
+      transition: border-color 0.15s, transform 0.15s, background 0.15s;
+      display: flex;
+      flex-direction: column;
+      gap: 0.2rem;
+      align-items: flex-start;
+      text-align: left;
+      font-family: var(--fu);
+    }
+    .take-btn:hover { border-color: var(--muted); transform: translateY(-1px); }
+    .take-btn.active {
+      background: #E2D8BA;
+      border-color: var(--ink);
+    }
+    .take-btn-title {
+      font-size: 0.9375rem;
+      font-weight: 500;
+      color: var(--text);
+    }
+    .take-btn-meta {
+      font-size: 0.75rem;
+      color: var(--muted);
+    }
+
+    .prompt-text {
+      font-family: var(--fd); font-style: italic; font-size: 1rem;
+      color: var(--muted); text-align: center; line-height: 1.55;
+      max-width: 320px;
+    }
+
+    /* ── SHARE ───────────────────────────────────────────────── */
+    .share-section { width: 100%; max-width: 320px; }
+    .share-label {
+      font-size: 0.6875rem; font-weight: 500; letter-spacing: 0.1em;
+      text-transform: uppercase; color: var(--ink);
+      text-align: center; margin-bottom: 1rem;
+    }
+    .share-row {
+      display: flex; gap: 0.75rem; align-items: center; justify-content: center;
+      flex-wrap: wrap;
+    }
+    .share-btn {
+      width: 44px; height: 44px;
+      border-radius: 50%;
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      display: flex; align-items: center; justify-content: center;
+      cursor: pointer; text-decoration: none; color: var(--text);
+      transition: background 0.15s, border-color 0.15s;
+      flex-shrink: 0;
+    }
+    .share-btn:hover { background: var(--border); border-color: var(--muted); }
+    .share-btn svg { display: block; }
+    .copy-btn { position: relative; }
+    .copy-toast {
+      position: absolute; bottom: calc(100% + 6px); left: 50%;
+      transform: translateX(-50%);
+      background: var(--text); color: var(--bg);
+      font-size: 0.75rem; padding: 0.3rem 0.6rem;
+      border-radius: 6px; white-space: nowrap;
+      opacity: 0; pointer-events: none;
+      transition: opacity 0.2s;
+    }
+    .copy-toast.show { opacity: 1; }
+    .share-help {
+      min-height: 1.2rem;
+      margin-top: 0.85rem;
+      font-size: 0.75rem;
+      color: var(--muted);
+      text-align: center;
+      line-height: 1.4;
+    }
+    .share-help.error { color: #8C3B2A; }
+
+    /* ── RETAKE ──────────────────────────────────────────────── */
+    .retake-section { width: 100%; max-width: 320px; text-align: center; }
+    .btn-retake {
+      display: block; width: 100%;
+      padding: 0.875rem 1.5rem;
+      background: transparent; color: var(--muted);
+      border: 1px solid var(--border); border-radius: 100px;
+      font-family: var(--fu); font-size: 0.9375rem;
+      cursor: pointer; text-align: center;
+      transition: color 0.15s, border-color 0.15s;
+    }
+    .btn-retake:hover { color: var(--text); border-color: var(--text); }
+
+    /* ── OVERLAY ─────────────────────────────────────────────── */
+    .overlay {
+      position: fixed; inset: 0;
+      background: rgba(28, 22, 16, 0.75);
+      display: flex; align-items: center; justify-content: center;
+      z-index: 200;
+      opacity: 1; transition: opacity 0.2s;
+    }
+    .overlay.hidden { display: none; }
+    .overlay-card {
+      background: var(--bg); border-radius: 20px;
+      padding: 2.5rem 2rem; max-width: 320px; width: 90%;
+      text-align: center;
+    }
+    .overlay-hl {
+      font-family: var(--fd); font-style: italic; font-size: 1.5rem;
+      font-weight: 400; letter-spacing: -0.02em;
+      margin-bottom: 0.75rem; line-height: 1.3;
+    }
+    .overlay-sub { font-size: 0.9rem; color: var(--muted); line-height: 1.55; margin-bottom: 2rem; }
+    .btn-cta {
+      display: block; width: 100%;
+      padding: 1rem 1.5rem;
+      background: var(--ink); color: #fff; border: none; border-radius: 100px;
+      font-family: var(--fu); font-size: 1rem; font-weight: 500;
+      cursor: pointer; text-align: center; text-decoration: none;
+      transition: opacity 0.15s; margin-bottom: 0.75rem;
+    }
+    .btn-cta:hover { opacity: 0.85; }
+    .overlay-cancel { font-size: 0.875rem; color: var(--muted); background: none; border: none; cursor: pointer; text-decoration: underline; }
+    .overlay-cancel:hover { color: var(--text); }
+
+    /* ── ERROR ───────────────────────────────────────────────── */
+    #view-error .page-sub a { color: var(--ink); }
+
+    @media (min-width: 640px) {
+      .video-wrap { max-width: 240px; }
+    }
+  </style>
+</head>
+<body>
+
+  <nav class="app-nav">
+    <span class="nav-mark">StoryTeller</span>
+    <div class="nav-right">
+      <a href="/story-archive.html" class="nav-link">My archive</a>
+      <button class="nav-link" id="signOutBtn">Sign out</button>
+    </div>
+  </nav>
+
+  <!-- Loading -->
+  <div id="view-loading" class="view active">
+    <h1 class="page-hl">Loading your story…</h1>
+    <div class="pulse-dots">
+      <div class="pulse-dot"></div>
+      <div class="pulse-dot"></div>
+      <div class="pulse-dot"></div>
+    </div>
+  </div>
+
+  <!-- Processing (video not yet ready) -->
+  <div id="view-processing" class="view">
+    <h1 class="page-hl">Your story is processing…</h1>
+    <p class="page-sub" id="processingMessage">We're finishing up your video. This usually takes less than a minute.</p>
+    <div class="pulse-dots">
+      <div class="pulse-dot"></div>
+      <div class="pulse-dot"></div>
+      <div class="pulse-dot"></div>
+    </div>
+  </div>
+
+  <!-- Result -->
+  <div id="view-result" class="view fade-in">
+    <div class="result-inner">
+      <div class="video-wrap">
+        <video id="storyVideo" controls playsinline preload="metadata"></video>
+      </div>
+
+      <div class="take-section" id="takeSection">
+        <p class="take-label">Choose a take</p>
+        <div class="take-list" id="takeList"></div>
+      </div>
+
+      <p class="prompt-text" id="promptText"></p>
+
+      <div class="share-section">
+        <p class="share-label" id="shareLabel">Share your story</p>
+        <div class="share-row">
+
+          <!-- Copy link -->
+          <button class="share-btn copy-btn" id="copyBtn" aria-label="Copy link" title="Copy link">
+            <span class="copy-toast" id="copyToast">Copied!</span>
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
+              <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
+            </svg>
+          </button>
+
+          <!-- X / Twitter -->
+          <a class="share-btn" id="twitterBtn" href="#" target="_blank" rel="noopener" aria-label="Share on X" title="Share on X">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor">
+              <path d="M18.244 2.25h3.308l-7.227 8.26 8.502 11.24H16.17l-5.214-6.817L4.99 21.75H1.68l7.73-8.835L1.254 2.25H8.08l4.713 6.231zm-1.161 17.52h1.833L7.084 4.126H5.117z"/>
+            </svg>
+          </a>
+
+          <!-- Facebook -->
+          <a class="share-btn" id="facebookBtn" href="#" target="_blank" rel="noopener" aria-label="Share on Facebook" title="Share on Facebook">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor">
+              <path d="M24 12.073c0-6.627-5.373-12-12-12s-12 5.373-12 12c0 5.99 4.388 10.954 10.125 11.854v-8.385H7.078v-3.47h3.047V9.43c0-3.007 1.792-4.669 4.533-4.669 1.312 0 2.686.235 2.686.235v2.953H15.83c-1.491 0-1.956.925-1.956 1.874v2.25h3.328l-.532 3.47h-2.796v8.385C19.612 23.027 24 18.062 24 12.073z"/>
+            </svg>
+          </a>
+
+          <!-- WhatsApp -->
+          <a class="share-btn" id="whatsappBtn" href="#" target="_blank" rel="noopener" aria-label="Share on WhatsApp" title="Share on WhatsApp">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor">
+              <path d="M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52.149-.174.198-.298.298-.497.099-.198.05-.371-.025-.52-.075-.149-.669-1.612-.916-2.207-.242-.579-.487-.5-.669-.51-.173-.008-.371-.01-.57-.01-.198 0-.52.074-.792.372-.272.297-1.04 1.016-1.04 2.479 0 1.462 1.065 2.875 1.213 3.074.149.198 2.096 3.2 5.077 4.487.709.306 1.262.489 1.694.625.712.227 1.36.195 1.871.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413-.074-.124-.272-.198-.57-.347m-5.421 7.403h-.004a9.87 9.87 0 01-5.031-1.378l-.361-.214-3.741.982.998-3.648-.235-.374a9.86 9.86 0 01-1.51-5.26c.001-5.45 4.436-9.884 9.888-9.884 2.64 0 5.122 1.03 6.988 2.898a9.825 9.825 0 012.893 6.994c-.003 5.45-4.437 9.884-9.885 9.884m8.413-18.297A11.815 11.815 0 0012.05 0C5.495 0 .16 5.335.157 11.892c0 2.096.547 4.142 1.588 5.945L.057 24l6.305-1.654a11.882 11.882 0 005.683 1.448h.005c6.554 0 11.89-5.335 11.893-11.893a11.821 11.821 0 00-3.48-8.413Z"/>
+            </svg>
+          </a>
+
+          <!-- Instagram -->
+          <button class="share-btn" id="instagramBtn" type="button" aria-label="Share to Instagram" title="Share to Instagram">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <rect x="3.5" y="3.5" width="17" height="17" rx="5"></rect>
+              <circle cx="12" cy="12" r="4.2"></circle>
+              <circle cx="17.4" cy="6.6" r="1"></circle>
+            </svg>
+          </button>
+
+          <!-- TikTok -->
+          <button class="share-btn" id="tiktokBtn" type="button" aria-label="Share to TikTok" title="Share to TikTok">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+              <path d="M14.8 3.2c.5 1.6 1.5 2.8 3 3.5.9.4 1.8.6 2.7.6v3.1c-1.4 0-2.8-.3-4-.9v5.4c0 1.6-.5 2.9-1.5 4-1.2 1.3-2.8 1.9-4.8 1.9-1.5 0-2.8-.4-3.9-1.3-1.5-1.2-2.3-2.9-2.3-5 0-1.8.7-3.4 2-4.6 1.2-1.1 2.7-1.7 4.5-1.7.3 0 .7 0 1 .1v3.2a4.7 4.7 0 0 0-1.1-.1c-.9 0-1.7.3-2.3.8a2.8 2.8 0 0 0-1 2.3c0 1 .3 1.8 1 2.4.6.5 1.3.8 2.2.8.8 0 1.5-.2 2-.7.8-.6 1.1-1.6 1.1-2.8V3.2h3.4Z"></path>
+            </svg>
+          </button>
+
+          <!-- Download -->
+          <a class="share-btn" id="downloadBtn" href="#" download="my-story.mp4" aria-label="Download video" title="Download video (for TikTok / Instagram)">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+              <polyline points="7 10 12 15 17 10"></polyline>
+              <line x1="12" y1="15" x2="12" y2="3"></line>
+            </svg>
+          </a>
+
+        </div>
+        <p class="share-help" id="shareHelp"></p>
+      </div>
+
+      <!-- Retake (shown once) -->
+      <div class="retake-section" id="retakeSection">
+        <button class="btn-retake" id="retakeBtn">Record a new take</button>
+      </div>
+
+    </div>
+  </div>
+
+  <!-- Error -->
+  <div id="view-error" class="view">
+    <h1 class="page-hl">Something went wrong</h1>
+    <p class="page-sub" id="errorMessage">We couldn't load your story. <a href="/story.html">Return home</a></p>
+  </div>
+
+  <!-- Retake friction overlay -->
+  <div id="retakeOverlay" class="overlay hidden">
+    <div class="overlay-card fade-in">
+      <h2 class="overlay-hl">One more take.<br>Make it count.</h2>
+      <p class="overlay-sub">Your current recording will stay saved. After this take, you’ll be able to choose which version to share.</p>
+      <a id="retakeConfirmBtn" href="#" class="btn-cta">Record again →</a>
+      <button class="overlay-cancel" id="retakeCancelBtn">Actually, I'm done</button>
+    </div>
+  </div>
+
+  <script>
+    const params  = new URLSearchParams(window.location.search);
+    const storyId = params.get('storyId');
+    let pollTimer = null;
+    let pollAttempts = 0;
+    const maxPollAttempts = 120;
+    let currentShareUrl = window.location.href;
+    let currentSelectedTakeId = null;
+    let currentSelectedTake = null;
+    let shareHelpTimer = null;
+
+    function showView(name) {
+      ['loading', 'processing', 'result', 'error'].forEach(v => {
+        const el = document.getElementById('view-' + v);
+        el.classList.toggle('active', v === name);
+      });
+    }
+
+    function showRecovery(message, href = '/story.html', linkText = 'Return home') {
+      document.getElementById('errorMessage').innerHTML =
+        message + ' <a href="' + href + '">' + linkText + '</a>';
+      showView('error');
+    }
+
+    async function fetchStory() {
+      const token = await firebase.auth().currentUser.getIdToken();
+      const resp = await fetch('/api/stories/' + encodeURIComponent(storyId), {
+        headers: { Authorization: 'Bearer ' + token },
+      });
+      if (!resp.ok) throw new Error('HTTP ' + resp.status);
+      return resp.json();
+    }
+
+    function getVideoSignedUrl(data) {
+      return data.videoSignedUrl || data.finalVideoSignedUrl || data.video_signed_url || null;
+    }
+
+    function getRequestedTakeId() {
+      return new URLSearchParams(window.location.search).get('take');
+    }
+
+    function getStoryTakes(data) {
+      if (Array.isArray(data.takes) && data.takes.length) return data.takes;
+
+      const legacyVideoSignedUrl = getVideoSignedUrl(data);
+      if (!legacyVideoSignedUrl) return [];
+
+      return [{
+        takeId: data.latestTakeId || data.finalReportId || 'legacy-story-take',
+        reportId: data.finalReportId || null,
+        responseDocId: data.responseDocId || null,
+        createdAt: data.createdAt || null,
+        videoSignedUrl: legacyVideoSignedUrl,
+        thumbnailSignedUrl: data.thumbnailSignedUrl || null,
+        audioSignedUrl: data.audioSignedUrl || null,
+        isLatest: true,
+      }];
+    }
+
+    function getLatestTake(data) {
+      const takes = getStoryTakes(data);
+      return takes.find(take => take && take.isLatest) || takes[0] || null;
+    }
+
+    function getAvailableTakes(data) {
+      return getStoryTakes(data).filter(take => take && take.videoSignedUrl);
+    }
+
+    function buildShareUrl(selectedTake, availableTakeCount) {
+      const url = new URL(window.location.href);
+      if (selectedTake?.reportId && availableTakeCount > 1) {
+        url.searchParams.set('take', selectedTake.reportId);
+      } else {
+        url.searchParams.delete('take');
+      }
+      return url;
+    }
+
+    function formatTakeLabel(index, total) {
+      return 'Take ' + String(total - index);
+    }
+
+    function selectTake(data) {
+      const takes = getAvailableTakes(data);
+      if (!takes.length) return null;
+
+      const requestedTakeId = currentSelectedTakeId || getRequestedTakeId();
+      if (requestedTakeId) {
+        const requested = takes.find((take) => (
+          take.takeId === requestedTakeId || take.reportId === requestedTakeId
+        ));
+        if (requested) return requested;
+      }
+
+      return takes.find((take) => take.isLatest) || takes[0];
+    }
+
+    function updateShareActions(selectedTake, availableTakeCount) {
+      const shareUrl = buildShareUrl(selectedTake, availableTakeCount);
+      currentShareUrl = shareUrl.toString();
+      currentSelectedTakeId = selectedTake?.reportId || selectedTake?.takeId || null;
+      currentSelectedTake = selectedTake || null;
+      history.replaceState({}, '', shareUrl.pathname + shareUrl.search);
+
+      const encodedUrl = encodeURIComponent(currentShareUrl);
+      const encodedText = encodeURIComponent('Watch my story on StoryTeller');
+
+      document.getElementById('twitterBtn').href =
+        'https://twitter.com/intent/tweet?text=' + encodedText + '&url=' + encodedUrl;
+      document.getElementById('facebookBtn').href =
+        'https://www.facebook.com/sharer/sharer.php?u=' + encodedUrl;
+      document.getElementById('whatsappBtn').href =
+        'https://wa.me/?text=' + encodeURIComponent(currentShareUrl);
+    }
+
+    function showShareHelp(message, isError = false) {
+      const shareHelp = document.getElementById('shareHelp');
+      shareHelp.textContent = message || '';
+      shareHelp.classList.toggle('error', !!isError);
+      if (shareHelpTimer) clearTimeout(shareHelpTimer);
+      if (message) {
+        shareHelpTimer = setTimeout(() => {
+          shareHelp.textContent = '';
+          shareHelp.classList.remove('error');
+        }, 5000);
+      }
+    }
+
+    function getPlatformLabel(platform) {
+      return platform === 'instagram' ? 'Instagram' : 'TikTok';
+    }
+
+    function getPlatformUrl(platform) {
+      return platform === 'instagram' ? 'https://www.instagram.com/' : 'https://www.tiktok.com/';
+    }
+
+    function triggerVideoDownload(objectUrl, filename = 'my-story.mp4') {
+      const link = document.createElement('a');
+      link.href = objectUrl;
+      link.download = filename;
+      link.rel = 'noopener';
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+    }
+
+    async function fetchSharableVideo(videoUrl, platform) {
+      if (!videoUrl) throw new Error('Missing video URL');
+      const response = await fetch(videoUrl);
+      if (!response.ok) throw new Error('Video download failed with HTTP ' + response.status);
+      const blob = await response.blob();
+      const mimeType = blob.type || 'video/mp4';
+      const extension = mimeType.includes('webm') ? 'webm' : 'mp4';
+      const filename = 'storyteller-' + platform + '-share.' + extension;
+      const file = typeof File === 'function'
+        ? new File([blob], filename, { type: mimeType })
+        : null;
+
+      return {
+        blob,
+        file,
+        filename,
+      };
+    }
+
+    async function shareToShortVideoPlatform(platform) {
+      const take = currentSelectedTake;
+      const platformLabel = getPlatformLabel(platform);
+      if (!take?.videoSignedUrl) {
+        showShareHelp('This take is still processing.', true);
+        return;
+      }
+
+      showShareHelp('Preparing your ' + platformLabel + ' share…');
+
+      const supportsNativeShare = typeof navigator.share === 'function';
+      if (supportsNativeShare) {
+        try {
+          const prepared = await fetchSharableVideo(take.videoSignedUrl, platform);
+          const shareFile = prepared.file;
+          const canShareFiles = shareFile && (
+            typeof navigator.canShare !== 'function' ||
+            navigator.canShare({ files: [shareFile] })
+          );
+          if (canShareFiles) {
+            await navigator.share({
+              title: 'My StoryTeller video',
+              text: 'Shared from StoryTeller',
+              files: [shareFile],
+            });
+            showShareHelp(platformLabel + ' share sheet opened.');
+            return;
+          }
+        } catch (err) {
+          console.warn('[story-result] native share failed:', err);
+        }
+      }
+
+      const shareWindow = window.open(getPlatformUrl(platform), '_blank', 'noopener');
+
+      try {
+        const prepared = await fetchSharableVideo(take.videoSignedUrl, platform);
+        const objectUrl = URL.createObjectURL(prepared.blob);
+        triggerVideoDownload(objectUrl, prepared.filename);
+        setTimeout(() => URL.revokeObjectURL(objectUrl), 60 * 1000);
+        showShareHelp('Your video is downloading. Finish posting it in ' + platformLabel + '.');
+      } catch (err) {
+        console.error('[story-result] fallback share download error:', err);
+        if (shareWindow && !shareWindow.closed) {
+          shareWindow.focus();
+        }
+        showShareHelp(platformLabel + ' opened, but the video download failed.', true);
+      }
+    }
+
+    function renderTakePicker(data, selectedTake) {
+      const takes = getAvailableTakes(data);
+      const takeSection = document.getElementById('takeSection');
+      const takeList = document.getElementById('takeList');
+      takeList.innerHTML = '';
+
+      if (takes.length < 2) {
+        takeSection.classList.remove('active');
+        return;
+      }
+
+      takes.forEach((take, index) => {
+        const btn = document.createElement('button');
+        btn.type = 'button';
+        btn.className = 'take-btn' + ((selectedTake?.reportId || selectedTake?.takeId) === (take.reportId || take.takeId) ? ' active' : '');
+        btn.innerHTML =
+          '<span class="take-btn-title">' + formatTakeLabel(index, takes.length) + '</span>' +
+          '<span class="take-btn-meta">' + (take.isLatest ? 'Newest recording' : 'Earlier recording') + '</span>';
+        btn.addEventListener('click', () => {
+          currentSelectedTakeId = take.reportId || take.takeId;
+          renderResult(data);
+        });
+        takeList.appendChild(btn);
+      });
+
+      takeSection.classList.add('active');
+    }
+
+    function renderResult(data) {
+      const selectedTake = selectTake(data);
+      const availableTakes = getAvailableTakes(data);
+      const videoSignedUrl = selectedTake?.videoSignedUrl || getVideoSignedUrl(data);
+      const video = document.getElementById('storyVideo');
+      if (videoSignedUrl && video.src !== videoSignedUrl) {
+        video.src = videoSignedUrl;
+        video.load();
+      }
+
+      renderTakePicker(data, selectedTake);
+
+      const promptEl = document.getElementById('promptText');
+      promptEl.textContent = data.promptText ? '“' + data.promptText + '”' : '';
+
+      const shareLabel = document.getElementById('shareLabel');
+      shareLabel.textContent = availableTakes.length > 1 ? 'Share this take' : 'Share your story';
+
+      const dlBtn = document.getElementById('downloadBtn');
+      if (videoSignedUrl) {
+        dlBtn.href = videoSignedUrl;
+        dlBtn.style.display = '';
+      } else {
+        dlBtn.style.display = 'none';
+      }
+
+      updateShareActions(selectedTake, availableTakes.length);
+
+      const retakeSection = document.getElementById('retakeSection');
+      if (localStorage.getItem('retake_result_used_' + storyId)) {
+        retakeSection.style.display = 'none';
+      }
+
+      showView('result');
+    }
+
+    function shouldTreatAsPermanentFailure(data) {
+      return !!(data.mediaProcessingError || data.mediaProcessingFailedAt);
+    }
+
+    function updateProcessingCopy(data) {
+      const messageEl = document.getElementById('processingMessage');
+      const latestTake = getLatestTake(data);
+      const availableTakes = getAvailableTakes(data);
+      if (latestTake && !latestTake.videoSignedUrl && availableTakes.length > 0) {
+        messageEl.textContent = 'Your new take is saved. We’re finishing the video now, and both takes will appear here once it’s ready.';
+      } else if (data.status === 'final_recorded') {
+        messageEl.textContent = 'Your recording is saved. We’re finishing the video now.';
+      } else {
+        messageEl.textContent = 'We’re finishing your final telling now. This usually takes less than a minute.';
+      }
+    }
+
+    async function checkStoryState(data) {
+      if (shouldTreatAsPermanentFailure(data)) {
+        showRecovery(
+          'Your final telling did not finish processing.',
+          '/story-final.html?storyId=' + encodeURIComponent(storyId),
+          'Record again'
+        );
+        return true;
+      }
+
+      const latestTake = getLatestTake(data);
+      if (latestTake?.videoSignedUrl) {
+        if (pollTimer) clearInterval(pollTimer);
+        renderResult(data);
+        return true;
+      }
+
+      if (!latestTake) {
+        const videoSignedUrl = getVideoSignedUrl(data);
+        if (videoSignedUrl) {
+          if (pollTimer) clearInterval(pollTimer);
+          renderResult(data);
+          return true;
+        }
+      }
+
+      return false;
+    }
+
+    async function loadAndPoll() {
+      if (!storyId) {
+        showRecovery('Missing story ID.', '/story.html', 'Return home');
+        return;
+      }
+
+      showView('loading');
+
+      try {
+        const data = await fetchStory();
+        if (await checkStoryState(data)) return;
+
+        updateProcessingCopy(data);
+        showView('processing');
+
+        pollAttempts = 0;
+        pollTimer = setInterval(async () => {
+          pollAttempts++;
+          if (pollAttempts > maxPollAttempts) {
+            clearInterval(pollTimer);
+            showRecovery(
+              'This story took too long to finish processing.',
+              '/story-final.html?storyId=' + encodeURIComponent(storyId),
+              'Record again'
+            );
+            return;
+          }
+
+          try {
+            const fresh = await fetchStory();
+            if (await checkStoryState(fresh)) return;
+            updateProcessingCopy(fresh);
+          } catch (err) {
+            console.error('[story-result] polling error:', err);
+          }
+        }, 5000);
+      } catch (err) {
+        console.error('[story-result] load error:', err);
+        showRecovery(
+          'We couldn\'t load your story.',
+          '/story-final.html?storyId=' + encodeURIComponent(storyId),
+          'Record again'
+        );
+      }
+    }
+
+    // Copy link
+    document.getElementById('copyBtn').addEventListener('click', () => {
+      navigator.clipboard.writeText(currentShareUrl).then(() => {
+        const toast = document.getElementById('copyToast');
+        toast.classList.add('show');
+        setTimeout(() => toast.classList.remove('show'), 2000);
+      }).catch(() => {});
+    });
+
+    document.getElementById('instagramBtn').addEventListener('click', () => {
+      shareToShortVideoPlatform('instagram').catch((err) => {
+        console.error('[story-result] instagram share error:', err);
+        showShareHelp('Instagram share could not be prepared.', true);
+      });
+    });
+
+    document.getElementById('tiktokBtn').addEventListener('click', () => {
+      shareToShortVideoPlatform('tiktok').catch((err) => {
+        console.error('[story-result] tiktok share error:', err);
+        showShareHelp('TikTok share could not be prepared.', true);
+      });
+    });
+
+    // Retake flow
+    document.getElementById('retakeBtn').addEventListener('click', () => {
+      localStorage.setItem('retake_result_used_' + storyId, '1');
+      document.getElementById('retakeOverlay').classList.remove('hidden');
+    });
+
+    document.getElementById('retakeConfirmBtn').addEventListener('click', (e) => {
+      e.preventDefault();
+      window.location.href = '/story-final.html?storyId=' + encodeURIComponent(storyId);
+    });
+
+    document.getElementById('retakeCancelBtn').addEventListener('click', () => {
+      document.getElementById('retakeOverlay').classList.add('hidden');
+      document.getElementById('retakeSection').style.display = 'none';
+    });
+
+    document.getElementById('signOutBtn').addEventListener('click', () => {
+      if (pollTimer) clearInterval(pollTimer);
+      firebase.auth().signOut().then(() => { window.location.href = '/story.html'; });
+    });
+
+    firebase.auth().onAuthStateChanged(user => {
+      if (!user) { window.location.href = '/story.html'; return; }
+      loadAndPoll();
+    });
+  </script>
+
+</body>
+</html>
