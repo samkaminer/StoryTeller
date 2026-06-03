@@ -148,8 +148,8 @@
 
   <!-- Loading -->
   <div id="view-loading">
-    <h1 class="loading-hl">Reading your story…</h1>
-    <p class="loading-sub">Please be patient while we make notes on your story.</p>
+    <h1 class="loading-hl" id="loadingTitle">Reading your story…</h1>
+    <p class="loading-sub" id="loadingSubtitle">Please be patient while we make notes on your story.</p>
     <div class="pulse-dots">
       <div class="pulse-dot"></div>
       <div class="pulse-dot"></div>
@@ -183,11 +183,19 @@
     const params    = new URLSearchParams(window.location.search);
     const storyId   = params.get('storyId');
     let unsubscribe = null;
+    let currentUser = null;
+    let retryAttempted = false;
+    let retryInFlight = false;
 
     function showView(name) {
       document.getElementById('view-loading').style.display = name === 'loading' ? 'flex'  : 'none';
       document.getElementById('view-notes').style.display   = name === 'notes'   ? 'block' : 'none';
       document.getElementById('view-error').style.display   = name === 'error'   ? 'flex'  : 'none';
+    }
+
+    function setLoadingCopy(title, subtitle) {
+      document.getElementById('loadingTitle').textContent = title;
+      document.getElementById('loadingSubtitle').textContent = subtitle;
     }
 
     function setFinalHref(id) {
@@ -207,31 +215,71 @@
       });
     }
 
-    function onStoryDoc(doc) {
+    async function requestReanalysis(reason) {
+      if (retryAttempted || retryInFlight || !currentUser || !storyId) return false;
+
+      retryAttempted = true;
+      retryInFlight = true;
+      setLoadingCopy('Trying again…', 'We saved your transcript and are generating notes again now.');
+      showView('loading');
+
+      try {
+        const idToken = await currentUser.getIdToken();
+        const response = await fetch('/api/stories/' + encodeURIComponent(storyId) + '/reanalyze', {
+          method: 'POST',
+          headers: {
+            Authorization: `Bearer ${idToken}`,
+          },
+        });
+
+        if (!response.ok) {
+          throw new Error(await response.text());
+        }
+
+        console.log('Story notes reanalysis requested:', reason);
+        return true;
+      } catch (err) {
+        console.error('Story reanalysis failed:', err);
+        showView('error');
+        return false;
+      } finally {
+        retryInFlight = false;
+      }
+    }
+
+    async function onStoryDoc(doc) {
       if (!doc.exists) { showView('error'); return; }
       const data = doc.data();
 
       if (data.status === 'analyzed') {
-        clearTimeout(analysisTimeout);
-        if (unsubscribe) { unsubscribe(); unsubscribe = null; }
-
         const notes = Array.isArray(data.notes) ? data.notes : [];
         if (notes.length > 0) {
+          clearTimeout(analysisTimeout);
+          if (unsubscribe) { unsubscribe(); unsubscribe = null; }
           renderNotes(notes);
           showView('notes');
         } else {
-          showView('error');
+          const retried = await requestReanalysis('empty-notes');
+          if (!retried) {
+            clearTimeout(analysisTimeout);
+            if (unsubscribe) { unsubscribe(); unsubscribe = null; }
+            showView('error');
+          }
         }
       } else if (data.status === 'error') {
-        clearTimeout(analysisTimeout);
-        if (unsubscribe) { unsubscribe(); unsubscribe = null; }
-        showView('error');
+        const retried = await requestReanalysis('analysis-error');
+        if (!retried) {
+          clearTimeout(analysisTimeout);
+          if (unsubscribe) { unsubscribe(); unsubscribe = null; }
+          showView('error');
+        }
       }
     }
 
     let analysisTimeout;
 
     firebase.auth().onAuthStateChanged(user => {
+      currentUser = user || null;
       if (!user) {
         window.location.href = '/story.html';
         return;
@@ -247,7 +295,7 @@
       const db = firebase.firestore();
 
       unsubscribe = db.collection('stories').doc(storyId).onSnapshot(
-        doc => onStoryDoc(doc),
+        doc => { void onStoryDoc(doc); },
         err => {
           console.error('Firestore listener error:', err);
           showView('error');

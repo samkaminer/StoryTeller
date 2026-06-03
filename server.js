@@ -375,11 +375,33 @@ const mediaUpload = multer({
       'audio/mp4',
       'video/mp4',
       'audio/mpeg',
-      'audio/wav'
+      'audio/wav',
+      'audio/ogg',
+      'video/ogg',
+      'application/octet-stream'
     ];
-    if (allowedTypes.includes(file.mimetype) || file.mimetype.startsWith('audio/') || file.mimetype.startsWith('video/')) {
+
+    const mimeType = typeof file.mimetype === 'string' ? file.mimetype : '';
+    const originalName = typeof file.originalname === 'string' ? file.originalname.toLowerCase() : '';
+    const fieldName = typeof file.fieldname === 'string' ? file.fieldname : '';
+    const hasMediaExtension = /\.(webm|mp4|m4a|mp3|wav|ogg)$/i.test(originalName);
+    const isKnownMediaField = fieldName === 'audio' || fieldName === 'video';
+
+    if (
+      allowedTypes.includes(mimeType) ||
+      mimeType.startsWith('audio/') ||
+      mimeType.startsWith('video/') ||
+      (isKnownMediaField && hasMediaExtension) ||
+      (isKnownMediaField && !mimeType)
+    ) {
       cb(null, true);
     } else {
+      console.error('[Media Upload] Rejected file by filter:', {
+        fieldname: file.fieldname,
+        originalname: file.originalname,
+        mimetype: file.mimetype,
+        size: file.size
+      });
       cb(new Error('Invalid file type. Only audio and video files are allowed.'));
     }
   }
@@ -627,6 +649,7 @@ app.use('/api/', rateLimiters.api);
 app.use('/api/gmail', require('./server/routes/gmail-oauth'));
 app.use('/api/campaigns', require('./server/routes/campaigns'));
 app.use('/api/context-strings', require('./server/routes/context-strings'));
+app.use('/api/stories', require('./server/routes/stories').createRouter(storage, GCS_BUCKET_NAME));
 
 // Initialize email service
 const EmailService = require('./server/services/email-service');
@@ -7824,6 +7847,52 @@ app.post('/api/interviews/:interviewId/upload-recording',
         message: 'Failed to process recording upload',
         error: error.message 
       });
+    }
+  }
+);
+
+// --- Story Final Telling Upload ---
+// Dedicated endpoint for story final tellings. The general interview upload route
+// validates interviewId with a min-length of 20, which rejects 'story-template-v1' (16 chars).
+app.post('/api/stories/:storyId/upload-final',
+  mediaUpload.fields([
+    { name: 'audio', maxCount: 1 },
+    { name: 'video', maxCount: 1 }
+  ]),
+  async (req, res) => {
+    const { storyId } = req.params;
+    const { responseDocId, persistentSessionId } = req.body;
+    const audioFile = req.files?.audio?.[0];
+    const videoFile = req.files?.video?.[0];
+
+    console.log(`[StoryUpload] storyId=${storyId} reportId=${persistentSessionId} audio=${audioFile?.size || 0}b video=${videoFile?.size || 0}b`);
+
+    if (!audioFile) {
+      return res.status(400).json({ success: false, message: 'Audio file is required' });
+    }
+    if (!responseDocId || !persistentSessionId) {
+      return res.status(400).json({ success: false, message: 'Missing responseDocId or persistentSessionId' });
+    }
+
+    try {
+      mediaQueue.push({
+        audioBuffer: audioFile.buffer,
+        videoBuffer: videoFile?.buffer || Buffer.alloc(0),
+        audioMimeType: audioFile.mimetype,
+        videoMimeType: videoFile?.mimetype || '',
+        responseDocId,
+        reportId: persistentSessionId,
+        socketId: null,
+        sessionId: `STORY_UPLOAD_${storyId}_${Date.now()}`,
+        interviewId: null,
+        storyId,
+        isStoryFinalTelling: true,
+      });
+
+      res.json({ success: true, message: 'Upload initiated', responseDocId });
+    } catch (err) {
+      console.error(`[StoryUpload] Queue error:`, err.message);
+      res.status(500).json({ success: false, message: 'Failed to queue upload' });
     }
   }
 );

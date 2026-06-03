@@ -12,8 +12,8 @@ const firebaseConfig = window.PROMPTER_FIREBASE_CONFIG || {
 // Initialize Firebase
 firebase.initializeApp(firebaseConfig);
 
-// Initialize Firestore
-const db = firebase.firestore();
+// Initialize Firestore only on pages that loaded the Firestore compat SDK.
+const db = typeof firebase.firestore === 'function' ? firebase.firestore() : null;
 
 // Initialize Firebase Auth
 const auth = firebase.auth();
@@ -61,9 +61,9 @@ setTimeout(() => {
         db.collection('interviews').limit(1).get()
             .then(() => console.log('Firestore connectivity test: SUCCESS'))
             .catch(err => console.error('Firestore connectivity test FAILED:', err));
+    } else if (!db) {
+        console.log('Firestore connectivity test skipped - Firestore SDK not loaded on this page');
     } else if (!firebase.auth().currentUser) {
         console.log('Firestore connectivity test skipped - no authenticated user');
-    } else {
-        console.error('Firestore db object not available for connectivity test');
     }
 }, 2000); 

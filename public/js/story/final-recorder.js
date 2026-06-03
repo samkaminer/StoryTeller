@@ -109,8 +109,20 @@ let audioStream  = null;
 let mainRecorder = null;   // video+audio for upload blob
 let dgRecorder   = null;   // audio-only for Deepgram
 let mainChunks   = [];
-let rerecordUsed = false;
 let stopTriggered = false; // prevent double-stop
+let uploadStarted = false;
+let finalTellingReady = false;
+let finalTellingReadyPromise = null;
+let resolveFinalTellingReady = null;
+
+function resetFinalTellingReadyPromise() {
+  finalTellingReady = false;
+  finalTellingReadyPromise = new Promise((resolve) => {
+    resolveFinalTellingReady = resolve;
+  });
+}
+
+resetFinalTellingReadyPromise();
 
 // ── Socket.IO ─────────────────────────────────────────────────────────────────
 function connectSocket() {
@@ -124,6 +136,13 @@ function connectSocket() {
     reportId      = data.reportId;
     responseDocId = data.responseDocId;
     interviewId   = data.interviewId;
+    finalTellingReady = true;
+    if (resolveFinalTellingReady) {
+      resolveFinalTellingReady(data);
+      resolveFinalTellingReady = null;
+    }
+    const startBtn = document.getElementById('startBtn');
+    if (startBtn) startBtn.disabled = false;
   });
 
   socket.on('finalTellingError', (data) => {
@@ -137,11 +156,6 @@ function connectSocket() {
 
   socket.on('finalSegment', ({ transcript }) => {
     if (transcript) setLiveTranscript(transcript);
-  });
-
-  socket.on('finalTellingEnded', () => {
-    // transcript saved — proceed to upload
-    uploadRecording();
   });
 
   socket.on('connect_error', () => {
@@ -216,6 +230,7 @@ function checkLandscape() {
 
 // ── Recording ─────────────────────────────────────────────────────────────────
 function startRecording() {
+  uploadStarted = false;
   stopTriggered = false;
   mainChunks = [];
 
@@ -301,24 +316,28 @@ async function stopRecording(isAutoStop = false) {
       const t = setTimeout(resolve, 8000);
       socket.once('finalTellingEnded', () => { clearTimeout(t); resolve(); });
     });
-    uploadRecording();
-  } else {
-    uploadRecording();
   }
+
+  await uploadRecording();
 }
 
 async function uploadRecording() {
+  if (uploadStarted) return;
+  uploadStarted = true;
   showView('uploading');
 
-  if (!interviewId || !reportId || !responseDocId) {
-    // Can't upload without IDs — skip to result
-    redirectToResult();
+  if (!reportId || !responseDocId) {
+    console.error('[final-recorder] Missing upload identifiers', { reportId, responseDocId, interviewId, storyId });
+    showSetupError('Your recording finished, but we could not prepare the save step. Please record it one more time.');
+    showView('setup');
     return;
   }
 
   const audioTracks = mainChunks.filter(c => c.size > 0);
   if (audioTracks.length === 0) {
-    redirectToResult();
+    console.error('[final-recorder] No recorded media chunks were captured');
+    showSetupError('No recording data was captured. Please record it one more time.');
+    showView('setup');
     return;
   }
 
@@ -329,7 +348,6 @@ async function uploadRecording() {
   const isVideo = blobMime.startsWith('video/') && videoStream;
   if (isVideo) {
     fd.append('video', blob, 'final-telling' + (blobMime.includes('mp4') ? '.mp4' : '.webm'));
-    // audio-only fallback blob from audioStream if available
     const audioBlob = new Blob(mainChunks, { type: 'audio/webm' });
     fd.append('audio', audioBlob, 'final-telling.webm');
   } else {
@@ -339,28 +357,43 @@ async function uploadRecording() {
   fd.append('persistentSessionId', reportId);
   if (storyId) fd.append('storyId', storyId);
 
+  // Use the story-specific upload endpoint to avoid the interviewId length validator
+  const uploadUrl = storyId
+    ? `/api/stories/${encodeURIComponent(storyId)}/upload-final`
+    : `/api/interviews/${encodeURIComponent(interviewId)}/upload-recording`;
+
   try {
-    const res = await fetch(`/api/interviews/${encodeURIComponent(interviewId)}/upload-recording`, {
-      method: 'POST',
-      body: fd,
-    });
-    if (!res.ok) console.warn('[final-recorder] upload responded', res.status);
+    const res = await fetch(uploadUrl, { method: 'POST', body: fd });
+    let payload = null;
+    try {
+      payload = await res.json();
+    } catch (_) {}
+
+    if (!res.ok || payload?.success === false) {
+      console.error('[final-recorder] upload failed', {
+        status: res.status,
+        payload,
+        reportId,
+        responseDocId,
+        interviewId,
+        storyId,
+      });
+      showSetupError('We recorded your take, but the upload did not finish. Please record it one more time.');
+      showView('setup');
+      return;
+    }
   } catch (err) {
     console.error('[final-recorder] upload error:', err);
+    showSetupError('We recorded your take, but the upload connection failed. Please record it one more time.');
+    showView('setup');
+    return;
   }
 
   redirectToResult();
 }
 
 function redirectToResult() {
-  // If user has used their re-record or this is first take finishing naturally,
-  // decide whether to offer retake or go straight to result.
-  if (!rerecordUsed) {
-    rerecordUsed = true;
-    showView('retake');
-  } else {
-    window.location.href = '/story-result.html?storyId=' + encodeURIComponent(storyId);
-  }
+  window.location.href = '/story-result.html?storyId=' + encodeURIComponent(storyId);
 }
 
 // ── Re-record ─────────────────────────────────────────────────────────────────
@@ -371,15 +404,14 @@ function startRetake() {
   document.getElementById('warningBanner').className = 'warning-banner';
   document.getElementById('liveTranscript').textContent = '';
   mainChunks = [];
+  uploadStarted = false;
 
   // Re-init Deepgram session for second take
   if (socket && socket.connected) {
+    resetFinalTellingReadyPromise();
+    const startBtn = document.getElementById('startBtn');
+    if (startBtn) startBtn.disabled = true;
     socket.emit('startFinalTelling', { storyId });
-    socket.once('finalTellingReady', (data) => {
-      reportId      = data.reportId;
-      responseDocId = data.responseDocId;
-      interviewId   = data.interviewId;
-    });
   }
 
   showView('ready');
@@ -401,8 +433,22 @@ async function init() {
   attachPreviews();
   setTimeout(checkLandscape, 600);
   showView('ready');
+  const startBtn = document.getElementById('startBtn');
+  startBtn.disabled = true;
 
-  document.getElementById('startBtn').addEventListener('click', () => {
+  try {
+    await Promise.race([
+      finalTellingReadyPromise,
+      new Promise((_, reject) => setTimeout(() => reject(new Error('Timed out preparing final telling session')), 10000))
+    ]);
+  } catch (err) {
+    console.error('[final-recorder] final telling setup failed:', err);
+    showSetupError('We could not prepare the final telling session. Please reload and try again.');
+    showView('setup');
+    return;
+  }
+
+  startBtn.addEventListener('click', () => {
     showView('recording');
     startRecording();
   });
