@@ -649,6 +649,7 @@ app.use('/api/', rateLimiters.api);
 app.use('/api/gmail', require('./server/routes/gmail-oauth'));
 app.use('/api/campaigns', require('./server/routes/campaigns'));
 app.use('/api/context-strings', require('./server/routes/context-strings'));
+app.use('/api/social', require('./server/routes/social'));
 app.use('/api/stories', require('./server/routes/stories').createRouter(storage, GCS_BUCKET_NAME));
 
 // Initialize email service
@@ -3137,6 +3138,14 @@ ${interview.content || 'No content available'}`
                     interview_id: interviewId,
                     story_id: storyId,
                     report_type: 'final_telling',
+                    take_response_doc_id: finalResponseDocId,
+                    take_media_status: 'recording',
+                    take_video_gcs_url: null,
+                    take_audio_gcs_url: null,
+                    take_thumbnail_gcs_url: null,
+                    take_media_processed_at: null,
+                    take_media_processing_error: null,
+                    take_media_processing_failed_at: null,
                     status: 'recording',
                     start_timestamp: admin.firestore.FieldValue.serverTimestamp(),
                     total_recording_duration: 0,
@@ -3180,7 +3189,13 @@ ${interview.content || 'No content available'}`
                         .collection('responses').doc(finalResponseDocId)
                         .update({ answer: finalTranscript, word_timestamps: wordTimestamps });
                 }
-                await db.collection('reports').doc(finalReportId).update({ status: 'awaiting_upload' });
+                await db.collection('reports').doc(finalReportId).update({
+                    status: 'awaiting_upload',
+                    take_response_doc_id: finalResponseDocId,
+                    take_media_status: 'awaiting_upload',
+                    take_media_processing_error: null,
+                    take_media_processing_failed_at: null,
+                });
                 if (storyId) {
                     await db.collection('stories').doc(storyId).update({
                         finalReportId,

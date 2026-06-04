@@ -11,6 +11,15 @@ const rateLimiters = {
     legacyHeaders: false,
   }),
 
+  // Strict limit for third-party OAuth connect flows
+  socialConnect: rateLimit({
+    windowMs: 15 * 60 * 1000, // 15 minutes
+    max: 10, // 10 OAuth starts/callbacks per window
+    message: 'Too many social connection attempts, please try again later',
+    standardHeaders: true,
+    legacyHeaders: false,
+  }),
+
   // Moderate limit for API endpoints
   api: rateLimit({
     windowMs: 1 * 60 * 1000, // 1 minute

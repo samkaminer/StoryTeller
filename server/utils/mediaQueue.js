@@ -371,6 +371,17 @@ const mediaQueue = new Queue(async function (task, cb) {
       .collection('responses').doc(responseDocId)
       .update(updateData);
 
+    await db.collection('reports').doc(reportId).update({
+      take_response_doc_id: responseDocId,
+      take_audio_gcs_url: audioUrl,
+      take_video_gcs_url: videoUrl || null,
+      take_thumbnail_gcs_url: thumbnailUrl || null,
+      take_media_processed_at: admin.firestore.FieldValue.serverTimestamp(),
+      take_media_processing_error: null,
+      take_media_processing_failed_at: null,
+      take_media_status: videoUrl ? 'ready' : 'audio_ready',
+    });
+
     // Update stories doc with final video and thumbnail for story final tellings
     if (isStoryFinalTelling && storyId && videoUrl && db) {
       try {
@@ -378,6 +389,36 @@ const mediaQueue = new Queue(async function (task, cb) {
         if (thumbnailUrl) storyUpdate.thumbnail_gcs = thumbnailUrl;
         await db.collection('stories').doc(storyId).update(storyUpdate);
         console.log(`[MediaQueue] Updated stories/${storyId} with final_video_gcs${thumbnailUrl ? ' and thumbnail_gcs' : ''}`);
+
+        // Send story completion email (non-fatal)
+        try {
+          const EmailService = require('../services/email-service');
+          const storySnap = await db.collection('stories').doc(storyId).get();
+          const storyData = storySnap.data() || {};
+          if (storyData.userEmail) {
+            const baseUrl = process.env.BASE_URL || 'http://localhost:3001';
+            let thumbSignedUrl = null;
+            if (thumbnailUrl) {
+              try {
+                const thumbPath = thumbnailUrl.replace(`gs://${bucket.name}/`, '');
+                const [tUrl] = await bucket.file(thumbPath).getSignedUrl({
+                  version: 'v4', action: 'read', expires: Date.now() + 7 * 24 * 60 * 60 * 1000,
+                });
+                thumbSignedUrl = tUrl;
+              } catch (_) {}
+            }
+            await EmailService.sendStoryComplete({
+              to: storyData.userEmail,
+              userName: storyData.userName || null,
+              thumbnailUrl: thumbSignedUrl,
+              watchUrl: `${baseUrl}/story-result.html?storyId=${encodeURIComponent(storyId)}`,
+              archiveUrl: `${baseUrl}/story-archive.html`,
+            });
+            console.log(`[MediaQueue] Story completion email sent to ${storyData.userEmail}`);
+          }
+        } catch (emailErr) {
+          console.warn(`[MediaQueue] Story completion email failed (non-fatal):`, emailErr.message);
+        }
       } catch (storyErr) {
         console.warn(`[MediaQueue] Failed to update stories doc (non-fatal):`, storyErr.message);
       }
@@ -432,6 +473,12 @@ const mediaQueue = new Queue(async function (task, cb) {
           mediaProcessingError: error.message,
           mediaProcessingFailedAt: admin.firestore.FieldValue.serverTimestamp()
         });
+      await db.collection('reports').doc(reportId).update({
+        take_response_doc_id: responseDocId,
+        take_media_processing_error: error.message,
+        take_media_processing_failed_at: admin.firestore.FieldValue.serverTimestamp(),
+        take_media_status: 'failed',
+      });
     } catch (dbError) {
       console.error('[MediaQueue] Failed to update error status:', dbError);
     }

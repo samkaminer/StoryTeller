@@ -1,159 +1,92 @@
 const express = require('express');
 const admin = require('firebase-admin');
 const { requireAuth } = require('../middleware/auth');
+const {
+  gcsSignedUrl,
+  loadStoryDoc,
+  toIsoString,
+  listStoryTakes,
+  buildLegacyStoryTake,
+  resolveStoryTake,
+} = require('../utils/story-takes');
+const {
+  getOwnedSocialAccount,
+  createSocialPublishJob,
+} = require('../utils/social-store');
 
-async function gcsSignedUrl(storage, bucketName, gcsPath) {
-  if (!storage || !bucketName || !gcsPath) return null;
-  try {
-    const filePath = gcsPath.replace(`gs://${bucketName}/`, '');
-    const [url] = await storage.bucket(bucketName).file(filePath).getSignedUrl({
-      version: 'v4',
-      action: 'read',
-      expires: Date.now() + 7 * 24 * 60 * 60 * 1000,
-    });
-    return url;
-  } catch {
-    return null;
-  }
-}
+function createPublishHandler({ platform, publishMode }) {
+  return async (req, res) => {
+    try {
+      const db = admin.firestore();
+      const { storyId, takeId } = req.params;
+      const { socialAccountId, caption, platformOptions } = req.body || {};
 
-async function loadStoryDoc(db, storyId, userId) {
-  const doc = await db.collection('stories').doc(storyId).get();
-  if (!doc.exists) return { status: 404, body: { error: 'Not found' } };
+      if (!socialAccountId) {
+        return res.status(400).json({ error: 'socialAccountId is required' });
+      }
 
-  const data = doc.data() || {};
-  if (data.userId && data.userId !== userId) {
-    return { status: 403, body: { error: 'Forbidden' } };
-  }
+      const loaded = await loadStoryDoc(db, storyId, req.user.uid);
+      if (!loaded.doc) return res.status(loaded.status).json(loaded.body);
 
-  return { doc, data };
-}
+      const take = await resolveStoryTake(db, req.app.locals.storage || null, req.app.locals.bucketName || null, storyId, loaded.data, takeId);
+      if (!take) {
+        return res.status(404).json({ error: 'Take not found' });
+      }
 
-function toIsoString(value) {
-  return value?.toDate?.()?.toISOString?.() || null;
-}
+      if (!take.finalVideoGcs) {
+        return res.status(409).json({ error: 'Take video is not ready for publishing' });
+      }
 
-function toMillis(value) {
-  if (!value) return 0;
-  if (typeof value.toMillis === 'function') return value.toMillis();
-  if (typeof value.toDate === 'function') return value.toDate().getTime();
-  return 0;
-}
+      const account = await getOwnedSocialAccount(db, req.user.uid, socialAccountId);
+      if (!account) {
+        return res.status(404).json({ error: 'Social account not found' });
+      }
+      if (account.data.platform !== platform) {
+        return res.status(400).json({ error: `Selected social account is not a ${platform} account` });
+      }
+      if (account.data.status !== 'active') {
+        return res.status(409).json({ error: 'Selected social account is not active' });
+      }
 
-async function findStoryMediaFromReport(db, finalReportId) {
-  if (!db || !finalReportId) return null;
+      const publishJob = await createSocialPublishJob(db, req.user.uid, {
+        storyId,
+        takeReportId: take.reportId || take.takeId,
+        takeResponseDocId: take.takeResponseDocId || take.responseDocId || null,
+        socialAccountId,
+        platform,
+        publishMode,
+        caption,
+        platformOptions: platformOptions && typeof platformOptions === 'object' ? platformOptions : {},
+        mediaSnapshot: {
+          videoGcsUrl: take.finalVideoGcs || null,
+          audioGcsUrl: take.finalAudioGcs || null,
+          thumbnailGcsUrl: take.thumbnailGcs || null,
+        },
+      });
 
-  const responsesSnap = await db.collection('reports')
-    .doc(finalReportId)
-    .collection('responses')
-    .get();
-
-  if (responsesSnap.empty) return null;
-
-  for (const doc of responsesSnap.docs) {
-    const data = doc.data() || {};
-    if (data.video_gcs_url || data.audio_gcs_url || data.mediaProcessingError || data.mediaProcessingFailedAt) {
-      return {
-        responseDocId: doc.id,
-        videoGcsUrl: data.video_gcs_url || null,
-        audioGcsUrl: data.audio_gcs_url || null,
-        mediaProcessingError: data.mediaProcessingError || null,
-        mediaProcessingFailedAt: data.mediaProcessingFailedAt?.toDate?.()?.toISOString?.() || null,
-        createdAt: toIsoString(data.timestamp),
-      };
+      res.status(202).json({
+        ok: true,
+        takeId: take.takeId,
+        publishJob,
+      });
+    } catch (err) {
+      console.error(`[stories publish ${platform}]`, err.message);
+      if (err.message === 'Unsupported platform') {
+        return res.status(400).json({ error: err.message });
+      }
+      res.status(500).json({ error: 'Failed to create publish job' });
     }
-  }
-
-  return null;
-}
-
-async function buildStoryTake(db, storage, bucketName, reportDoc, storyData, fallbackToStoryDoc = false) {
-  const reportData = reportDoc.data() || {};
-  const fallbackMedia = await findStoryMediaFromReport(db, reportDoc.id);
-  const useStoryDocMedia = fallbackToStoryDoc && !fallbackMedia?.videoGcsUrl && !fallbackMedia?.audioGcsUrl;
-
-  const videoGcsUrl = fallbackMedia?.videoGcsUrl || (useStoryDocMedia ? storyData.final_video_gcs || null : null);
-  const audioGcsUrl = fallbackMedia?.audioGcsUrl || (useStoryDocMedia ? storyData.final_audio_gcs || null : null);
-  const thumbnailGcsUrl = useStoryDocMedia ? storyData.thumbnail_gcs || null : null;
-  const mediaProcessingError = fallbackMedia?.mediaProcessingError || (useStoryDocMedia ? storyData.mediaProcessingError || null : null);
-  const mediaProcessingFailedAt = fallbackMedia?.mediaProcessingFailedAt || (useStoryDocMedia ? toIsoString(storyData.mediaProcessingFailedAt) : null);
-
-  const [videoSignedUrl, thumbnailSignedUrl, audioSignedUrl] = await Promise.all([
-    gcsSignedUrl(storage, bucketName, videoGcsUrl),
-    gcsSignedUrl(storage, bucketName, thumbnailGcsUrl),
-    gcsSignedUrl(storage, bucketName, audioGcsUrl),
-  ]);
-
-  return {
-    takeId: reportDoc.id,
-    reportId: reportDoc.id,
-    responseDocId: fallbackMedia?.responseDocId || null,
-    status: reportData.status || null,
-    createdAt: toIsoString(reportData.start_timestamp) || fallbackMedia?.createdAt || null,
-    videoSignedUrl,
-    thumbnailSignedUrl,
-    audioSignedUrl,
-    finalVideoGcs: videoGcsUrl,
-    thumbnailGcs: thumbnailGcsUrl,
-    finalAudioGcs: audioGcsUrl,
-    mediaProcessingError,
-    mediaProcessingFailedAt,
-  };
-}
-
-async function listStoryTakes(db, storage, bucketName, storyId, storyData) {
-  if (!db || !storyId) return [];
-
-  const reportsSnap = await db.collection('reports')
-    .where('story_id', '==', storyId)
-    .get();
-
-  const reportDocs = reportsSnap.docs
-    .filter((doc) => (doc.data() || {}).report_type === 'final_telling')
-    .sort((a, b) => toMillis(b.data()?.start_timestamp) - toMillis(a.data()?.start_timestamp));
-
-  if (!reportDocs.length) return [];
-
-  return Promise.all(reportDocs.map((reportDoc) => (
-    buildStoryTake(db, storage, bucketName, reportDoc, storyData, reportDoc.id === storyData.finalReportId)
-  )));
-}
-
-async function buildLegacyStoryTake(storage, bucketName, storyData) {
-  const videoGcsUrl = storyData.final_video_gcs || null;
-  const thumbnailGcsUrl = storyData.thumbnail_gcs || null;
-  const audioGcsUrl = storyData.final_audio_gcs || null;
-
-  if (!videoGcsUrl && !audioGcsUrl && !storyData.mediaProcessingError && !storyData.mediaProcessingFailedAt) {
-    return null;
-  }
-
-  const [videoSignedUrl, thumbnailSignedUrl, audioSignedUrl] = await Promise.all([
-    gcsSignedUrl(storage, bucketName, videoGcsUrl),
-    gcsSignedUrl(storage, bucketName, thumbnailGcsUrl),
-    gcsSignedUrl(storage, bucketName, audioGcsUrl),
-  ]);
-
-  return {
-    takeId: storyData.finalReportId || 'legacy-story-take',
-    reportId: storyData.finalReportId || null,
-    responseDocId: null,
-    status: storyData.status || null,
-    createdAt: toIsoString(storyData.finalRecordedAt) || null,
-    videoSignedUrl,
-    thumbnailSignedUrl,
-    audioSignedUrl,
-    finalVideoGcs: videoGcsUrl,
-    thumbnailGcs: thumbnailGcsUrl,
-    finalAudioGcs: audioGcsUrl,
-    mediaProcessingError: storyData.mediaProcessingError || null,
-    mediaProcessingFailedAt: toIsoString(storyData.mediaProcessingFailedAt),
   };
 }
 
 function createRouter(storage, bucketName) {
   const router = express.Router();
   const db = admin.firestore();
+  router.use((req, _res, next) => {
+    req.app.locals.storage = storage;
+    req.app.locals.bucketName = bucketName;
+    next();
+  });
 
   // GET /api/stories — list stories for the authenticated user
   router.get('/', requireAuth, async (req, res) => {
@@ -236,6 +169,18 @@ function createRouter(storage, bucketName) {
     }
   });
 
+  router.post(
+    '/:storyId/takes/:takeId/publish/tiktok',
+    requireAuth,
+    createPublishHandler({ platform: 'tiktok', publishMode: 'tiktok_draft' })
+  );
+
+  router.post(
+    '/:storyId/takes/:takeId/publish/instagram',
+    requireAuth,
+    createPublishHandler({ platform: 'instagram', publishMode: 'instagram_reel' })
+  );
+
   // GET /api/stories/:storyId — fetch a single story with signed URLs
   router.get('/:storyId', requireAuth, async (req, res) => {
     try {
@@ -246,7 +191,7 @@ function createRouter(storage, bucketName) {
       const { doc, data } = loaded;
       let takes = await listStoryTakes(db, storage, bucketName, doc.id, data);
       if (!takes.length) {
-        const legacyTake = await buildLegacyStoryTake(storage, bucketName, data);
+        const legacyTake = await buildLegacyStoryTake(storage, bucketName, doc.id, data);
         if (legacyTake) takes = [legacyTake];
       }
 

@@ -181,6 +181,19 @@ service cloud.firestore {
       allow write: if false;
     }
 
+    // Social publishing state and tokens are server-only
+    match /socialAccounts/{socialAccountId} {
+      allow read, write: if false;
+    }
+
+    match /socialAuthStates/{stateId} {
+      allow read, write: if false;
+    }
+
+    match /socialPublishJobs/{publishJobId} {
+      allow read, write: if false;
+    }
+
     // Catch-all deny rule - IMPORTANT: This must be last
     match /{document=**} {
       allow read, write: if false;
