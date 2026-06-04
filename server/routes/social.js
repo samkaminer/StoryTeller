@@ -4,6 +4,7 @@ const fetch = require('node-fetch');
 const { requireAuth } = require('../middleware/auth');
 const rateLimiters = require('../middleware/rateLimiter');
 const {
+  disconnectOwnedSocialAccount,
   getOwnedPublishJob,
   listSocialAccounts,
   normalizeScopes,
@@ -430,6 +431,23 @@ function createRouter(options = {}) {
     } catch (err) {
       console.error('[social GET /accounts]', err.message);
       res.status(500).json({ error: 'Failed to load social accounts' });
+    }
+  });
+
+  router.delete('/accounts/:socialAccountId', requireAuth, async (req, res) => {
+    try {
+      const account = await disconnectOwnedSocialAccount(db, req.user.uid, req.params.socialAccountId);
+      if (!account) {
+        return res.status(404).json({ error: 'Social account not found' });
+      }
+
+      res.json({
+        ok: true,
+        account: account.serialized,
+      });
+    } catch (err) {
+      console.error('[social DELETE /accounts/:socialAccountId]', err.message);
+      res.status(500).json({ error: 'Failed to disconnect social account' });
     }
   });
 

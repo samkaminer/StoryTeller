@@ -296,4 +296,41 @@ describe('social connected account routes', () => {
     expect(accountsResponse.body.accounts[0].meta).toBeUndefined();
     expect(accountsResponse.body.accounts[0].accessToken).toBeUndefined();
   });
+
+  it('disconnects a connected social account and clears connection state', async () => {
+    const db = createMemoryDb();
+    const app = createApp(db, jest.fn());
+
+    db._collections.socialAccounts.set('social-1', {
+      userId: 'user-123',
+      platform: 'tiktok',
+      displayName: 'Creator One',
+      username: 'creator.one',
+      status: 'active',
+      connectedAt: new Date('2026-06-04T12:00:00.000Z'),
+      updatedAt: new Date('2026-06-04T12:00:00.000Z'),
+      accessToken: { ciphertext: 'abc' },
+      refreshToken: { ciphertext: 'def' },
+    });
+
+    const response = await request(app)
+      .delete('/api/social/accounts/social-1');
+
+    expect(response.status).toBe(200);
+    expect(response.body.ok).toBe(true);
+    expect(response.body.account.platform).toBe('tiktok');
+    expect(response.body.account.status).toBe('disconnected');
+    expect(response.body.account.hasRefreshToken).toBe(false);
+
+    const storedAccount = db._collections.socialAccounts.get('social-1');
+    expect(storedAccount.status).toBe('disconnected');
+    expect(storedAccount.accessToken).toBeNull();
+    expect(storedAccount.refreshToken).toBeNull();
+
+    const accountsResponse = await request(app).get('/api/social/accounts');
+    expect(accountsResponse.status).toBe(200);
+    expect(accountsResponse.body.platforms.tiktok.connected).toBe(false);
+    expect(accountsResponse.body.accounts[0].status).toBe('disconnected');
+    expect(accountsResponse.body.accounts[0].hasRefreshToken).toBe(false);
+  });
 });

@@ -137,6 +137,44 @@ async function getOwnedSocialAccount(db, userId, socialAccountId) {
   };
 }
 
+async function disconnectOwnedSocialAccount(db, userId, socialAccountId) {
+  const ownedAccount = await getOwnedSocialAccount(db, userId, socialAccountId);
+  if (!ownedAccount) return null;
+
+  await db.collection(SOCIAL_ACCOUNT_COLLECTION).doc(socialAccountId).update({
+    status: 'disconnected',
+    accessToken: null,
+    refreshToken: null,
+    tokenExpiresAt: null,
+    refreshTokenExpiresAt: null,
+    lastValidatedAt: null,
+    lastRefreshAt: null,
+    updatedAt: timestamp(),
+  });
+
+  return {
+    ...ownedAccount,
+    data: {
+      ...ownedAccount.data,
+      status: 'disconnected',
+      accessToken: null,
+      refreshToken: null,
+      tokenExpiresAt: null,
+      refreshTokenExpiresAt: null,
+      lastValidatedAt: null,
+      lastRefreshAt: null,
+      updatedAt: new Date().toISOString(),
+    },
+    serialized: serializeSocialAccountStatusData({
+      ...ownedAccount.data,
+      status: 'disconnected',
+      accessToken: null,
+      refreshToken: null,
+      updatedAt: new Date().toISOString(),
+    }, socialAccountId),
+  };
+}
+
 function serializePublishJob(doc) {
   const data = doc.data() || {};
   return {
@@ -249,6 +287,7 @@ module.exports = {
   createSocialAccount,
   listSocialAccounts,
   getOwnedSocialAccount,
+  disconnectOwnedSocialAccount,
   upsertConnectedSocialAccount,
   createSocialPublishJob,
   getOwnedPublishJob,
