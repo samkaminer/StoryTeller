@@ -13,16 +13,63 @@ const {
   getOwnedSocialAccount,
   createSocialPublishJob,
 } = require('../utils/social-store');
+const { scheduleSocialPublishJob } = require('../services/social-publish-runner');
 
-function createPublishHandler({ platform, publishMode }) {
+function validatePublishRequest(platform, body = {}) {
+  if (!body.socialAccountId || typeof body.socialAccountId !== 'string') {
+    return 'socialAccountId is required';
+  }
+
+  if (body.caption !== undefined && typeof body.caption !== 'string') {
+    return 'caption must be a string';
+  }
+
+  if (typeof body.caption === 'string' && body.caption.length > 2200) {
+    return 'caption must be 2200 characters or fewer';
+  }
+
+  if (body.platformOptions !== undefined && (!body.platformOptions || typeof body.platformOptions !== 'object' || Array.isArray(body.platformOptions))) {
+    return 'platformOptions must be an object';
+  }
+
+  const platformOptions = body.platformOptions || {};
+  if (platform === 'instagram') {
+    if (platformOptions.shareToFeed !== undefined && typeof platformOptions.shareToFeed !== 'boolean') {
+      return 'platformOptions.shareToFeed must be a boolean';
+    }
+
+    if (
+      platformOptions.thumbOffsetMs !== undefined &&
+      (!Number.isInteger(platformOptions.thumbOffsetMs) || platformOptions.thumbOffsetMs < 0)
+    ) {
+      return 'platformOptions.thumbOffsetMs must be a non-negative integer';
+    }
+
+    if (
+      platformOptions.useTakeThumbnailAsCover !== undefined &&
+      typeof platformOptions.useTakeThumbnailAsCover !== 'boolean'
+    ) {
+      return 'platformOptions.useTakeThumbnailAsCover must be a boolean';
+    }
+
+    if (platformOptions.useTakeThumbnailAsCover && platformOptions.thumbOffsetMs !== undefined) {
+      return 'Choose either platformOptions.useTakeThumbnailAsCover or platformOptions.thumbOffsetMs';
+    }
+  }
+
+  return null;
+}
+
+function createPublishHandler({ platform, publishMode, publishJobScheduler }) {
   return async (req, res) => {
     try {
       const db = admin.firestore();
       const { storyId, takeId } = req.params;
       const { socialAccountId, caption, platformOptions } = req.body || {};
 
-      if (!socialAccountId) {
-        return res.status(400).json({ error: 'socialAccountId is required' });
+      const validationError = validatePublishRequest(platform, req.body || {});
+      if (validationError) {
+        return res.status(400).json({ error: validationError });
       }
 
       const loaded = await loadStoryDoc(db, storyId, req.user.uid);
@@ -69,6 +116,15 @@ function createPublishHandler({ platform, publishMode }) {
         takeId: take.takeId,
         publishJob,
       });
+
+      if (typeof publishJobScheduler === 'function') {
+        publishJobScheduler({
+          db,
+          storage: req.app.locals.storage || null,
+          defaultBucketName: req.app.locals.bucketName || null,
+          publishJobId: publishJob.publishJobId,
+        });
+      }
     } catch (err) {
       console.error(`[stories publish ${platform}]`, err.message);
       if (err.message === 'Unsupported platform') {
@@ -79,9 +135,10 @@ function createPublishHandler({ platform, publishMode }) {
   };
 }
 
-function createRouter(storage, bucketName) {
+function createRouter(storage, bucketName, options = {}) {
   const router = express.Router();
   const db = admin.firestore();
+  const publishJobScheduler = options.publishJobScheduler || scheduleSocialPublishJob;
   router.use((req, _res, next) => {
     req.app.locals.storage = storage;
     req.app.locals.bucketName = bucketName;
@@ -172,13 +229,13 @@ function createRouter(storage, bucketName) {
   router.post(
     '/:storyId/takes/:takeId/publish/tiktok',
     requireAuth,
-    createPublishHandler({ platform: 'tiktok', publishMode: 'tiktok_draft' })
+    createPublishHandler({ platform: 'tiktok', publishMode: 'tiktok_draft', publishJobScheduler })
   );
 
   router.post(
     '/:storyId/takes/:takeId/publish/instagram',
     requireAuth,
-    createPublishHandler({ platform: 'instagram', publishMode: 'instagram_reel' })
+    createPublishHandler({ platform: 'instagram', publishMode: 'instagram_reel', publishJobScheduler })
   );
 
   // GET /api/stories/:storyId — fetch a single story with signed URLs

@@ -12,6 +12,7 @@ const {
 } = require('../utils/social-store');
 const { createSocialAuthState, consumeSocialAuthState } = require('../utils/social-auth-state');
 const { assertSocialTokenEncryptionConfig } = require('../utils/social-crypto');
+const { syncSocialPublishJob } = require('../services/social-publish-runner');
 
 const TIKTOK_AUTHORIZE_URL = 'https://www.tiktok.com/v2/auth/authorize/';
 const TIKTOK_TOKEN_URL = 'https://open.tiktokapis.com/v2/oauth/token/';
@@ -296,11 +297,45 @@ function buildPlatformStatus(accounts) {
   return platforms;
 }
 
+function getPlatformSetupStatus(platform) {
+  try {
+    if (platform === 'tiktok') {
+      getTikTokConfig();
+    } else if (platform === 'instagram') {
+      getMetaConfig();
+    } else {
+      throw new Error('Unsupported platform');
+    }
+
+    return {
+      configured: true,
+      missingEnvVars: [],
+      setupError: null,
+    };
+  } catch (error) {
+    return {
+      configured: false,
+      missingEnvVars: Array.isArray(error?.missingEnvVars) ? error.missingEnvVars : [],
+      setupError: error?.message || 'Provider configuration is invalid',
+    };
+  }
+}
+
+function buildPlatformConfigs() {
+  return {
+    tiktok: getPlatformSetupStatus('tiktok'),
+    instagram: getPlatformSetupStatus('instagram'),
+  };
+}
+
 function handleProviderConfigError(res, error) {
-  if (!error?.missingEnvVars) return false;
+  if (!error?.missingEnvVars && !String(error?.message || '').includes('SOCIAL_TOKEN_ENCRYPTION_KEY_BASE64')) {
+    return false;
+  }
+
   res.status(500).json({
     error: error.message,
-    missingEnvVars: error.missingEnvVars,
+    missingEnvVars: error.missingEnvVars || [],
   });
   return true;
 }
@@ -419,14 +454,16 @@ async function handleInstagramCallback(req, res, options) {
 
 function createRouter(options = {}) {
   const router = express.Router();
-  const db = getDb(options);
+  const publishJobStatusSync = options.publishJobStatusSync || syncSocialPublishJob;
 
   router.get('/accounts', requireAuth, async (req, res) => {
     try {
+      const db = getDb(options);
       const accounts = await listSocialAccounts(db, req.user.uid);
       res.json({
         accounts,
         platforms: buildPlatformStatus(accounts),
+        platformConfigs: buildPlatformConfigs(),
       });
     } catch (err) {
       console.error('[social GET /accounts]', err.message);
@@ -436,6 +473,7 @@ function createRouter(options = {}) {
 
   router.delete('/accounts/:socialAccountId', requireAuth, async (req, res) => {
     try {
+      const db = getDb(options);
       const account = await disconnectOwnedSocialAccount(db, req.user.uid, req.params.socialAccountId);
       if (!account) {
         return res.status(404).json({ error: 'Social account not found' });
@@ -453,6 +491,7 @@ function createRouter(options = {}) {
 
   router.post('/tiktok/connect/start', rateLimiters.socialConnect, requireAuth, async (req, res) => {
     try {
+      const db = getDb(options);
       const config = getTikTokConfig();
       const stateRecord = await createSocialAuthState(db, {
         userId: req.user.uid,
@@ -491,6 +530,7 @@ function createRouter(options = {}) {
 
   router.post('/instagram/connect/start', rateLimiters.socialConnect, requireAuth, async (req, res) => {
     try {
+      const db = getDb(options);
       const config = getMetaConfig();
       const stateRecord = await createSocialAuthState(db, {
         userId: req.user.uid,
@@ -529,9 +569,37 @@ function createRouter(options = {}) {
 
   router.get('/publishes/:publishJobId', requireAuth, async (req, res) => {
     try {
-      const publishJob = await getOwnedPublishJob(db, req.user.uid, req.params.publishJobId);
+      const db = getDb(options);
+      let publishJob = await getOwnedPublishJob(db, req.user.uid, req.params.publishJobId);
       if (!publishJob) {
         return res.status(404).json({ error: 'Publish job not found' });
+      }
+
+      if (typeof publishJobStatusSync === 'function') {
+        const refreshedJob = await publishJobStatusSync({
+          db,
+          storage: options.storage || null,
+          defaultBucketName: options.bucketName || null,
+          publishJobId: req.params.publishJobId,
+        });
+
+        if (refreshedJob?.publishJobId) {
+          publishJob = {
+            ...publishJob,
+            serialized: refreshedJob,
+            data: {
+              ...publishJob.data,
+              status: refreshedJob.status,
+              statusMessage: refreshedJob.statusMessage,
+              platformStatus: refreshedJob.platformStatus,
+              platformPublishId: refreshedJob.platformPublishId,
+              platformContainerId: refreshedJob.platformContainerId,
+              platformPostId: refreshedJob.platformPostId,
+              platformPermalink: refreshedJob.platformPermalink,
+              lastError: refreshedJob.lastError,
+            },
+          };
+        }
       }
 
       res.json({ publishJob: publishJob.serialized });
@@ -554,4 +622,5 @@ module.exports._private = {
   getAbsoluteBaseUrl,
   getMetaConfig,
   getTikTokConfig,
+  buildPlatformConfigs,
 };

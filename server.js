@@ -649,7 +649,10 @@ app.use('/api/', rateLimiters.api);
 app.use('/api/gmail', require('./server/routes/gmail-oauth'));
 app.use('/api/campaigns', require('./server/routes/campaigns'));
 app.use('/api/context-strings', require('./server/routes/context-strings'));
-app.use('/api/social', require('./server/routes/social'));
+app.use('/api/social', require('./server/routes/social').createRouter({
+  storage,
+  bucketName: GCS_BUCKET_NAME,
+}));
 app.use('/api/stories', require('./server/routes/stories').createRouter(storage, GCS_BUCKET_NAME));
 
 // Initialize email service

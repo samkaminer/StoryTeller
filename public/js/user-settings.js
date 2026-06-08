@@ -16,11 +16,23 @@ function createDefaultSocialPlatforms() {
     };
 }
 
+function createDefaultSocialPlatformConfigs() {
+    return {
+        tiktok: { configured: null, missingEnvVars: [], setupError: null },
+        instagram: { configured: null, missingEnvVars: [], setupError: null }
+    };
+}
+
 function createDefaultSocialAccountsState() {
     return {
         socialAccounts: [],
-        socialPlatforms: createDefaultSocialPlatforms()
+        socialPlatforms: createDefaultSocialPlatforms(),
+        socialPlatformConfigs: createDefaultSocialPlatformConfigs()
     };
+}
+
+function getSocialPlatformConfig(platform) {
+    return appState.userProfile.socialPlatformConfigs?.[platform] || createDefaultSocialPlatformConfigs()[platform];
 }
 
 // Apply user settings panel state from appState
@@ -60,11 +72,21 @@ function applyUserSettingsPanelState() {
         
         // Update Gmail connection status
         updateGmailConnectionStatus();
+        socialAccountUiState = { ...socialAccountUiState, isLoading: true };
         updateSocialConnectionStatus();
-        loadSocialAccountsStatus().catch((error) => {
-            console.error('Error loading connected accounts:', error);
-            setSocialAccountsFeedback(error.message || 'Failed to load connected accounts', 'error');
-        });
+        setSocialAccountsFeedback('Loading connected accounts…');
+        loadSocialAccountsStatus()
+            .then(() => {
+                setSocialAccountsFeedback('');
+            })
+            .catch((error) => {
+                console.error('Error loading connected accounts:', error);
+                setSocialAccountsFeedback(error.message || 'Failed to load connected accounts', 'error');
+            })
+            .finally(() => {
+                socialAccountUiState = { ...socialAccountUiState, isLoading: false };
+                updateSocialConnectionStatus();
+            });
 
         panel.style.display = 'flex';
         overlay.style.opacity = '1';
@@ -368,6 +390,17 @@ function getSocialPlatformLabel(platform) {
     return platform === 'instagram' ? 'Instagram' : 'TikTok';
 }
 
+function updateSocialRefreshButton() {
+    const refreshBtn = document.getElementById('refreshSocialAccountsBtn');
+    if (!refreshBtn) return;
+
+    const isBusy = socialAccountUiState.isLoading || Boolean(socialAccountUiState.actionPlatform) || Boolean(socialAccountUiState.disconnectingPlatform);
+    refreshBtn.textContent = socialAccountUiState.isLoading ? 'Refreshing…' : 'Refresh';
+    refreshBtn.disabled = isBusy;
+    refreshBtn.classList.toggle('opacity-60', isBusy);
+    refreshBtn.classList.toggle('cursor-not-allowed', isBusy);
+}
+
 function formatSocialStatus(status, connected) {
     if (connected || status === 'active') return 'Connected';
     if (status === 'reauth_required') return 'Reconnect needed';
@@ -378,12 +411,15 @@ function formatSocialStatus(status, connected) {
 
 function updateSocialPlatformCard(platform) {
     const platformState = getSocialPlatformState(platform);
+    const platformConfig = getSocialPlatformConfig(platform);
     const account = platformState.account || null;
     const label = getSocialPlatformLabel(platform);
     const status = account?.status || (platformState.connected ? 'active' : null);
+    const isConfigured = platformConfig.configured !== false;
+    const requiresSetup = platformConfig.configured === false;
     const isBusy = socialAccountUiState.isLoading || socialAccountUiState.actionPlatform === platform || socialAccountUiState.disconnectingPlatform === platform;
     const canDisconnect = Boolean(account?.socialAccountId) && status !== 'disconnected';
-    const shouldShowReconnect = Boolean(account?.socialAccountId);
+    const shouldShowReconnect = Boolean(account?.socialAccountId) && isConfigured;
     const isConnected = platformState.connected && status === 'active';
 
     const statusBadge = document.getElementById(`${platform}StatusBadge`);
@@ -394,10 +430,14 @@ function updateSocialPlatformCard(platform) {
     const disconnectBtn = document.getElementById(`disconnect${platform === 'instagram' ? 'Instagram' : 'Tiktok'}Btn`);
 
     if (statusBadge) {
-        statusBadge.textContent = formatSocialStatus(status, isConnected);
+        statusBadge.textContent = requiresSetup && !account
+            ? 'Setup required'
+            : formatSocialStatus(status, isConnected);
         statusBadge.className = 'text-[11px] uppercase tracking-wide px-2 py-0.5 rounded-full border';
         if (isConnected) {
             statusBadge.classList.add('border-green-600', 'text-green-300', 'bg-green-900', 'bg-opacity-20');
+        } else if (requiresSetup && !account) {
+            statusBadge.classList.add('border-yellow-600', 'text-yellow-300', 'bg-yellow-900', 'bg-opacity-20');
         } else if (status === 'reauth_required' || status === 'revoked') {
             statusBadge.classList.add('border-yellow-600', 'text-yellow-300', 'bg-yellow-900', 'bg-opacity-20');
         } else if (status === 'disconnected') {
@@ -408,7 +448,9 @@ function updateSocialPlatformCard(platform) {
     }
 
     if (summaryEl) {
-        if (!account) {
+        if (requiresSetup && !account) {
+            summaryEl.textContent = `${label} connection is not configured on this server yet.`;
+        } else if (!account) {
             summaryEl.textContent = `No ${label} account connected yet.`;
         } else if (account.username) {
             summaryEl.textContent = `${label} account: @${account.username}`;
@@ -420,7 +462,13 @@ function updateSocialPlatformCard(platform) {
     }
 
     if (metaEl) {
-        if (!account) {
+        if (requiresSetup && !account) {
+            if (platformConfig.missingEnvVars?.length) {
+                metaEl.textContent = `Missing env vars: ${platformConfig.missingEnvVars.join(', ')}`;
+            } else {
+                metaEl.textContent = platformConfig.setupError || `Server configuration is incomplete for ${label} connections.`;
+            }
+        } else if (!account) {
             metaEl.textContent = `Connect ${label} to manage future StoryTeller publishing from your own account.`;
         } else if (account.connectedAt) {
             const connectedDate = new Date(account.connectedAt);
@@ -434,8 +482,8 @@ function updateSocialPlatformCard(platform) {
     }
 
     if (connectBtn) {
-        connectBtn.textContent = socialAccountUiState.actionPlatform === platform ? `${label}...` : 'Connect';
-        connectBtn.disabled = isBusy;
+        connectBtn.textContent = requiresSetup ? 'Setup required' : (socialAccountUiState.actionPlatform === platform ? `${label}...` : 'Connect');
+        connectBtn.disabled = isBusy || requiresSetup;
         connectBtn.classList.toggle('hidden', Boolean(account));
         connectBtn.classList.toggle('opacity-60', connectBtn.disabled);
         connectBtn.classList.toggle('cursor-not-allowed', connectBtn.disabled);
@@ -444,7 +492,7 @@ function updateSocialPlatformCard(platform) {
     if (reconnectBtn) {
         reconnectBtn.classList.toggle('hidden', !shouldShowReconnect);
         reconnectBtn.textContent = socialAccountUiState.actionPlatform === platform ? 'Connecting…' : 'Reconnect';
-        reconnectBtn.disabled = isBusy;
+        reconnectBtn.disabled = isBusy || !isConfigured;
         reconnectBtn.classList.toggle('opacity-60', reconnectBtn.disabled);
         reconnectBtn.classList.toggle('cursor-not-allowed', reconnectBtn.disabled);
     }
@@ -460,6 +508,7 @@ function updateSocialPlatformCard(platform) {
 
 function updateSocialConnectionStatus() {
     SUPPORTED_SOCIAL_PLATFORMS.forEach(updateSocialPlatformCard);
+    updateSocialRefreshButton();
 }
 
 async function loadSocialAccountsStatus(force = false) {
@@ -489,7 +538,8 @@ async function loadSocialAccountsStatus(force = false) {
 
         appState.setUserProfile({
             socialAccounts: Array.isArray(payload.accounts) ? payload.accounts : [],
-            socialPlatforms: payload.platforms || createDefaultSocialPlatforms()
+            socialPlatforms: payload.platforms || createDefaultSocialPlatforms(),
+            socialPlatformConfigs: payload.platformConfigs || createDefaultSocialPlatformConfigs()
         });
         updateSocialConnectionStatus();
         return payload;
@@ -569,7 +619,11 @@ async function startSocialConnect(platform) {
 
         const payload = await response.json().catch(() => ({}));
         if (!response.ok) {
-            throw new Error(payload.error || `Failed to start ${getSocialPlatformLabel(platform)} connection`);
+            let errorMessage = payload.error || `Failed to start ${getSocialPlatformLabel(platform)} connection`;
+            if (Array.isArray(payload.missingEnvVars) && payload.missingEnvVars.length) {
+                errorMessage = `${errorMessage}. Missing: ${payload.missingEnvVars.join(', ')}`;
+            }
+            throw new Error(errorMessage);
         }
 
         const authWindow = window.open(

@@ -104,6 +104,8 @@
     .auth-toggle { text-align: center; font-size: 0.8125rem; color: var(--muted); }
     .auth-toggle a { color: var(--ink); text-decoration: underline; text-underline-offset: 2px; cursor: pointer; }
     .auth-privacy { font-size: 0.75rem; color: var(--muted); opacity: 0.65; text-align: center; line-height: 1.5; }
+    .consent-label { display: flex; align-items: flex-start; gap: 0.625rem; font-size: 0.8125rem; color: var(--muted); line-height: 1.5; cursor: pointer; margin-bottom: 0.75rem; max-width: 360px; }
+    .consent-check { flex-shrink: 0; margin-top: 0.125rem; width: 16px; height: 16px; accent-color: var(--ink); cursor: pointer; }
     .email-form-row { display: flex; flex-direction: column; gap: 0.5rem; }
 
     /* ── AUTH SCREEN ────────────────────────────────────────── */
@@ -580,6 +582,10 @@
           <p class="auth-toggle" id="authToggle">Don't have an account? <a href="#" id="authToggleLink">Sign up</a></p>
         </div>
         <div id="authError" class="error-msg hidden"></div>
+        <label class="consent-label" for="consentCheck">
+          <input type="checkbox" id="consentCheck" class="consent-check">
+          <span>I'm happy for my anonymized story data to help improve StoryTeller.</span>
+        </label>
         <p class="auth-privacy">By continuing you agree to our Terms of Service.<br>Your recordings are private by default.</p>
       </div>
     </div>
@@ -605,6 +611,10 @@
             <p class="auth-toggle" id="authToggleDt">Don't have an account? <a href="#" id="authToggleLinkDt">Sign up</a></p>
           </div>
           <div id="authErrorDt" class="error-msg hidden"></div>
+          <label class="consent-label" for="consentCheckDt">
+            <input type="checkbox" id="consentCheckDt" class="consent-check">
+            <span>I'm happy for my anonymized story data to help improve StoryTeller.</span>
+          </label>
           <p class="auth-privacy">Your recordings are private by default.</p>
         </div>
       </div>
@@ -884,6 +894,20 @@
       const storyId = params.get('storyId');
 
       if (user) {
+        // Fire-and-forget: persist data consent preference to Firestore
+        (async () => {
+          try {
+            const consentChecked =
+              document.getElementById('consentCheck')?.checked ||
+              document.getElementById('consentCheckDt')?.checked ||
+              false;
+            const db = firebase.firestore();
+            await db.collection('users').doc(user.uid).set(
+              { dataConsent: consentChecked, dataConsentAt: firebase.firestore.FieldValue.serverTimestamp() },
+              { merge: true }
+            );
+          } catch (_) {}
+        })();
         document.getElementById('navRight').style.display = '';
         document.getElementById('navEmail').textContent = user.email || user.displayName || '';
         if (isCompleted || window._pendingReview) {

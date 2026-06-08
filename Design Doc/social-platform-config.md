@@ -42,8 +42,28 @@ openssl rand -base64 32
 ```
 
 - `TIKTOK_REDIRECT_URI` and `META_REDIRECT_URI` must exactly match the callback URLs configured in each developer portal.
-- Use HTTPS for all non-local redirect URIs. `http://localhost:3001/...` is acceptable for local development, but deployed callback URLs should be HTTPS and on the same Storyteller host the popup opener uses.
+- Keep the redirect URIs on the same host and port as the local app you are actually testing. If Storyteller is running on `http://localhost:3002`, use `http://localhost:3002/api/social/tiktok/connect/callback` and `http://localhost:3002/api/social/instagram/connect/callback`, not the older `3001` examples.
+- Use HTTPS for all non-local redirect URIs. Localhost may use HTTP, but deployed callback URLs should be HTTPS and on the same Storyteller host the popup opener uses.
 - `META_WEBHOOK_VERIFY_TOKEN` is not used by the connected-account flow yet, but keep it reserved now because Meta webhook setup is part of the same app configuration you will need for publish status later.
+- TikTok draft publishing in the current backend uses the existing Google Cloud Storage credentials already required elsewhere in StoryTeller. There are no TikTok-specific storage env vars beyond the connected-account settings above.
+
+## Current TikTok publish behavior
+
+The current server implementation is intentionally limited to TikTok draft upload for a selected story take:
+
+- Entry route: `POST /api/stories/:storyId/takes/:takeId/publish/tiktok`
+- Status route: `GET /api/social/publishes/:publishJobId`
+- Publish mode: `tiktok_draft`
+- Transfer method: TikTok `FILE_UPLOAD`
+- Storage model: StoryTeller reads the chosen take from GCS server-side, uploads it to TikTok, stores a persistent publish job, and refreshes publish status through the poll endpoint.
+
+Important current limitations and assumptions:
+
+- This implementation does not do direct post yet.
+- The job stores the user-entered caption, but TikTok draft upload does not accept caption metadata on the upload endpoint, so the creator still edits and posts inside TikTok.
+- The frontend should poll `GET /api/social/publishes/:publishJobId` for progress instead of assuming the initial `202` means the draft is already available in TikTok.
+- StoryTeller must be able to decrypt the stored TikTok access token using `SOCIAL_TOKEN_ENCRYPTION_KEY_BASE64`.
+- The connected TikTok account must still be in `active` status at publish time and must retain the `video.upload` grant.
 
 ## TikTok for Developers
 
@@ -63,19 +83,27 @@ Current backend behavior:
 
 - Start route: `POST /api/social/tiktok/connect/start`
 - Callback route: `GET /api/social/tiktok/connect/callback`
+- Draft publish route: `POST /api/stories/:storyId/takes/:takeId/publish/tiktok`
+- Draft publish status route: `GET /api/social/publishes/:publishJobId`
 - OAuth mode: server-side web authorization code flow
 - Authorization URL: `https://www.tiktok.com/v2/auth/authorize/`
 - Token URL: `https://open.tiktokapis.com/v2/oauth/token/`
 - Profile lookup: `https://open.tiktokapis.com/v2/user/info/`
+- Draft upload init: `https://open.tiktokapis.com/v2/post/publish/inbox/video/init/`
+- Publish status polling: `https://open.tiktokapis.com/v2/post/publish/status/fetch/`
 
 Important TikTok constraints from the current official docs:
 
 - Tokens should be stored and managed on the server side.
 - For TikTok web/server flows, the current user-token docs use the standard authorization-code exchange. TikTok documents `code_verifier` as required for mobile and desktop only; the separate desktop guide uses a hex-encoded SHA-256 challenge and does not apply to this web backend.
-- `video.upload` must be approved on the app and authorized by the TikTok user before draft-upload publishing can be built.
+- `video.upload` must be approved on the app and authorized by the TikTok user before draft-upload publishing can be used.
+- Draft upload uses `/v2/post/publish/inbox/video/init/`, which is distinct from the direct-post endpoint and does not require `video.publish`.
+- TikTok draft-upload polling uses `/v2/post/publish/status/fetch/` and can return states such as `PROCESSING_UPLOAD`, `SEND_TO_USER_INBOX`, `PUBLISH_COMPLETE`, and `FAILED`.
 - `video.publish` is not needed for the connected-account backend in this change set.
 - If you later use TikTok pull-from-URL uploads or direct post, TikTok requires verified domains or URL prefixes for those media URLs.
 - Direct post from unaudited clients can be restricted to private viewing mode, so this repo stays on account-connect only for now.
+- For the current implementation, StoryTeller intentionally uses `FILE_UPLOAD` instead of `PULL_FROM_URL` so local and production publishing do not depend on TikTok URL-property verification.
+- TikTok’s current upload docs allow MP4, MOV, and WebM video files, up to 4 GB, with chunked upload requirements for files larger than 64 MB.
 
 ## Meta for Developers
 
@@ -99,16 +127,40 @@ Current backend behavior:
 
 - Start route: `POST /api/social/instagram/connect/start`
 - Callback route: `GET /api/social/instagram/connect/callback`
+- Reel publish route: `POST /api/stories/:storyId/takes/:takeId/publish/instagram`
+- Shared publish status route: `GET /api/social/publishes/:publishJobId`
 - OAuth dialog: `https://www.facebook.com/{META_GRAPH_API_VERSION}/dialog/oauth`
 - Token exchange: `https://graph.facebook.com/{META_GRAPH_API_VERSION}/oauth/access_token`
 - Account discovery: `GET /me/accounts?fields=id,name,instagram_business_account{...},connected_instagram_account{...}`
+- Reel container creation: `POST /{ig-user-id}/media`
+- Reel publish finalize: `POST /{ig-user-id}/media_publish`
+- Reel container polling: `GET /{ig-container-id}?fields=status_code,status`
+
+Current Instagram publish behavior:
+
+- Publish mode: `instagram_reel`
+- Media type: `REELS` only
+- Source model: StoryTeller uses the selected take’s immutable `videoGcsUrl` as the publish source, generates a signed public read URL, and sends that URL to Meta as `video_url`
+- Supported basic Reel options in the current backend:
+  - `caption`
+  - `share_to_feed`
+  - `thumb_offset`
+  - `cover_url` derived from the take thumbnail when explicitly requested
+- This implementation does not support Stories, carousel posts, collaborators, user tags, location tagging, shopping tags, or product tagging.
 
 Important Meta constraints from the current official docs:
 
 - Instagram publishing is for Professional accounts, not consumer Instagram accounts.
-- Meta’s content-publishing flow expects Facebook Login and server-side token handling.
-- Media publishing later will use `graph.facebook.com` and `rupload.facebook.com`.
+- Meta’s current Instagram publishing docs require Facebook Login for Business and server-side token handling.
+- The connected Instagram professional account must be linked to a Facebook Page the app user can access.
+- The app user must be able to perform the `MANAGE` or `CREATE_CONTENT` task on the linked Facebook Page.
+- If the app user only has access to the Page through Business Manager role assignment, Meta also calls out `ads_management` or `ads_read`.
 - Page Publishing Authorization can block publishing even when the user otherwise appears connected, so support should tell test users to complete PPA before publish work starts.
+- If the linked Page requires two-factor authentication, the Facebook user must also have completed two-factor authentication or publish requests can fail.
+- Meta’s current Reel specs require MP4 or MOV, maximum 300 MB, minimum 3 seconds, maximum 15 minutes.
+- Media used for publish must be reachable on a public URL when Meta fetches it. The current backend satisfies this by issuing signed Google Cloud Storage read URLs for the selected take and optional thumbnail.
+- The container status lifecycle used by the current backend is `IN_PROGRESS`, `FINISHED`, `PUBLISHED`, `ERROR`, and `EXPIRED`.
+- The current StoryTeller backend uses the long-lived Meta user access token returned by Facebook Login for Business because that is what the connected-account flow stores today. If Meta later requires a Page access token for some production cases, add a dedicated page-token exchange/storage step before broad rollout.
 - Meta webhook delivery requires the app to be in Live mode. This backend does not consume webhooks yet, but the app should be created with that future requirement in mind.
 
 ## Operational checklist

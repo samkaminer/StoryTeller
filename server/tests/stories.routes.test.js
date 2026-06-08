@@ -233,7 +233,9 @@ describe('stories routes', () => {
       req.session = { userId: 'user-123', email: 'user@example.com' };
       next();
     });
-    app.use('/api/stories', createRouter(storage, 'test-bucket'));
+    app.use('/api/stories', createRouter(storage, 'test-bucket', {
+      publishJobScheduler: jest.fn(),
+    }));
 
     const response = await request(app)
       .get(`/api/stories/${storyId}`);
@@ -336,7 +338,9 @@ describe('stories routes', () => {
       req.session = { userId: 'user-123', email: 'user@example.com' };
       next();
     });
-    app.use('/api/stories', createRouter(storage, 'test-bucket'));
+    app.use('/api/stories', createRouter(storage, 'test-bucket', {
+      publishJobScheduler: jest.fn(),
+    }));
 
     const response = await request(app)
       .post(`/api/stories/${storyId}/takes/${requestedTakeId}/publish/tiktok`)
@@ -364,6 +368,300 @@ describe('stories routes', () => {
         thumbnailGcsUrl: 'gs://test-bucket/story_thumbnails/take-1.jpg',
       },
     });
+  });
+
+  it('rejects publish job creation when caption is not a string', async () => {
+    const storyId = 'story-123';
+    const takeId = 'report-take-1';
+    const { publishJobWrites } = createPublishTestDb({
+      storyId,
+      storyData: {
+        userId: 'user-123',
+        status: 'final_recorded',
+        finalReportId: takeId,
+      },
+      reportDocs: [
+        {
+          id: takeId,
+          data: () => ({
+            story_id: storyId,
+            report_type: 'final_telling',
+            start_timestamp: makeTimestamp('2026-06-03T14:00:00.000Z'),
+            take_response_doc_id: 'response-take-1',
+            take_video_gcs_url: 'gs://test-bucket/story_videos/take-1.mp4',
+            take_media_status: 'ready',
+          }),
+        },
+      ],
+      socialAccountData: {
+        userId: 'user-123',
+        platform: 'tiktok',
+        status: 'active',
+      },
+    });
+
+    const app = express();
+    app.use(express.json());
+    app.use((req, _res, next) => {
+      req.session = { userId: 'user-123', email: 'user@example.com' };
+      next();
+    });
+    app.use('/api/stories', createRouter(null, 'test-bucket', {
+      publishJobScheduler: jest.fn(),
+    }));
+
+    const response = await request(app)
+      .post(`/api/stories/${storyId}/takes/${takeId}/publish/tiktok`)
+      .send({
+        socialAccountId: 'social-1',
+        caption: { invalid: true },
+      });
+
+    expect(response.status).toBe(400);
+    expect(response.body.error).toBe('caption must be a string');
+    expect(publishJobWrites).toHaveLength(0);
+  });
+
+  it('rejects publish job creation when platformOptions is not an object', async () => {
+    const storyId = 'story-123';
+    const takeId = 'report-take-1';
+    const { publishJobWrites } = createPublishTestDb({
+      storyId,
+      storyData: {
+        userId: 'user-123',
+        status: 'final_recorded',
+        finalReportId: takeId,
+      },
+      reportDocs: [
+        {
+          id: takeId,
+          data: () => ({
+            story_id: storyId,
+            report_type: 'final_telling',
+            start_timestamp: makeTimestamp('2026-06-03T14:00:00.000Z'),
+            take_response_doc_id: 'response-take-1',
+            take_video_gcs_url: 'gs://test-bucket/story_videos/take-1.mp4',
+            take_media_status: 'ready',
+          }),
+        },
+      ],
+      socialAccountData: {
+        userId: 'user-123',
+        platform: 'tiktok',
+        status: 'active',
+      },
+    });
+
+    const app = express();
+    app.use(express.json());
+    app.use((req, _res, next) => {
+      req.session = { userId: 'user-123', email: 'user@example.com' };
+      next();
+    });
+    app.use('/api/stories', createRouter(null, 'test-bucket', {
+      publishJobScheduler: jest.fn(),
+    }));
+
+    const response = await request(app)
+      .post(`/api/stories/${storyId}/takes/${takeId}/publish/tiktok`)
+      .send({
+        socialAccountId: 'social-1',
+        platformOptions: ['not-valid'],
+      });
+
+    expect(response.status).toBe(400);
+    expect(response.body.error).toBe('platformOptions must be an object');
+    expect(publishJobWrites).toHaveLength(0);
+  });
+
+  it('creates a queued Instagram Reel publish job with basic Reel options', async () => {
+    const storyId = 'story-123';
+    const takeId = 'report-take-1';
+    const { publishJobWrites } = createPublishTestDb({
+      storyId,
+      storyData: {
+        userId: 'user-123',
+        status: 'final_recorded',
+        finalReportId: takeId,
+      },
+      reportDocs: [
+        {
+          id: takeId,
+          data: () => ({
+            story_id: storyId,
+            report_type: 'final_telling',
+            start_timestamp: makeTimestamp('2026-06-03T14:00:00.000Z'),
+            take_response_doc_id: 'response-take-1',
+            take_video_gcs_url: 'gs://test-bucket/story_videos/take-1.mp4',
+            take_thumbnail_gcs_url: 'gs://test-bucket/story_thumbnails/take-1.jpg',
+            take_media_status: 'ready',
+          }),
+        },
+      ],
+      socialAccountData: {
+        userId: 'user-123',
+        platform: 'instagram',
+        status: 'active',
+      },
+    });
+
+    const publishJobScheduler = jest.fn();
+    const app = express();
+    app.use(express.json());
+    app.use((req, _res, next) => {
+      req.session = { userId: 'user-123', email: 'user@example.com' };
+      next();
+    });
+    app.use('/api/stories', createRouter(null, 'test-bucket', {
+      publishJobScheduler,
+    }));
+
+    const response = await request(app)
+      .post(`/api/stories/${storyId}/takes/${takeId}/publish/instagram`)
+      .send({
+        socialAccountId: 'social-1',
+        caption: 'Publish this Reel',
+        platformOptions: {
+          shareToFeed: true,
+          useTakeThumbnailAsCover: true,
+        },
+      });
+
+    expect(response.status).toBe(202);
+    expect(publishJobWrites).toHaveLength(1);
+    expect(publishJobWrites[0].data).toMatchObject({
+      storyId,
+      takeReportId: takeId,
+      socialAccountId: 'social-1',
+      platform: 'instagram',
+      publishMode: 'instagram_reel',
+      status: 'queued',
+      caption: 'Publish this Reel',
+      platformOptions: {
+        shareToFeed: true,
+        useTakeThumbnailAsCover: true,
+      },
+      mediaSnapshot: {
+        videoGcsUrl: 'gs://test-bucket/story_videos/take-1.mp4',
+        thumbnailGcsUrl: 'gs://test-bucket/story_thumbnails/take-1.jpg',
+      },
+    });
+    expect(publishJobScheduler).toHaveBeenCalledWith(expect.objectContaining({
+      db: expect.any(Object),
+      storage: null,
+      defaultBucketName: 'test-bucket',
+      publishJobId: expect.any(String),
+    }));
+  });
+
+  it('rejects Instagram publish when shareToFeed is not a boolean', async () => {
+    const storyId = 'story-123';
+    const takeId = 'report-take-1';
+    const { publishJobWrites } = createPublishTestDb({
+      storyId,
+      storyData: {
+        userId: 'user-123',
+        status: 'final_recorded',
+        finalReportId: takeId,
+      },
+      reportDocs: [
+        {
+          id: takeId,
+          data: () => ({
+            story_id: storyId,
+            report_type: 'final_telling',
+            start_timestamp: makeTimestamp('2026-06-03T14:00:00.000Z'),
+            take_response_doc_id: 'response-take-1',
+            take_video_gcs_url: 'gs://test-bucket/story_videos/take-1.mp4',
+            take_media_status: 'ready',
+          }),
+        },
+      ],
+      socialAccountData: {
+        userId: 'user-123',
+        platform: 'instagram',
+        status: 'active',
+      },
+    });
+
+    const app = express();
+    app.use(express.json());
+    app.use((req, _res, next) => {
+      req.session = { userId: 'user-123', email: 'user@example.com' };
+      next();
+    });
+    app.use('/api/stories', createRouter(null, 'test-bucket', {
+      publishJobScheduler: jest.fn(),
+    }));
+
+    const response = await request(app)
+      .post(`/api/stories/${storyId}/takes/${takeId}/publish/instagram`)
+      .send({
+        socialAccountId: 'social-1',
+        platformOptions: {
+          shareToFeed: 'yes',
+        },
+      });
+
+    expect(response.status).toBe(400);
+    expect(response.body.error).toBe('platformOptions.shareToFeed must be a boolean');
+    expect(publishJobWrites).toHaveLength(0);
+  });
+
+  it('rejects Instagram publish when both cover options are provided', async () => {
+    const storyId = 'story-123';
+    const takeId = 'report-take-1';
+    const { publishJobWrites } = createPublishTestDb({
+      storyId,
+      storyData: {
+        userId: 'user-123',
+        status: 'final_recorded',
+        finalReportId: takeId,
+      },
+      reportDocs: [
+        {
+          id: takeId,
+          data: () => ({
+            story_id: storyId,
+            report_type: 'final_telling',
+            start_timestamp: makeTimestamp('2026-06-03T14:00:00.000Z'),
+            take_response_doc_id: 'response-take-1',
+            take_video_gcs_url: 'gs://test-bucket/story_videos/take-1.mp4',
+            take_thumbnail_gcs_url: 'gs://test-bucket/story_thumbnails/take-1.jpg',
+            take_media_status: 'ready',
+          }),
+        },
+      ],
+      socialAccountData: {
+        userId: 'user-123',
+        platform: 'instagram',
+        status: 'active',
+      },
+    });
+
+    const app = express();
+    app.use(express.json());
+    app.use((req, _res, next) => {
+      req.session = { userId: 'user-123', email: 'user@example.com' };
+      next();
+    });
+    app.use('/api/stories', createRouter(null, 'test-bucket', {
+      publishJobScheduler: jest.fn(),
+    }));
+
+    const response = await request(app)
+      .post(`/api/stories/${storyId}/takes/${takeId}/publish/instagram`)
+      .send({
+        socialAccountId: 'social-1',
+        platformOptions: {
+          useTakeThumbnailAsCover: true,
+          thumbOffsetMs: 500,
+        },
+      });
+
+    expect(response.status).toBe(400);
+    expect(response.body.error).toBe('Choose either platformOptions.useTakeThumbnailAsCover or platformOptions.thumbOffsetMs');
+    expect(publishJobWrites).toHaveLength(0);
   });
 
   it('rejects publish job creation when the selected social account is not active', async () => {
@@ -410,7 +708,9 @@ describe('stories routes', () => {
       req.session = { userId: 'user-123', email: 'user@example.com' };
       next();
     });
-    app.use('/api/stories', createRouter(storage, 'test-bucket'));
+    app.use('/api/stories', createRouter(storage, 'test-bucket', {
+      publishJobScheduler: jest.fn(),
+    }));
 
     const response = await request(app)
       .post(`/api/stories/${storyId}/takes/${takeId}/publish/tiktok`)

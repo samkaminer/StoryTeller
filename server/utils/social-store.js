@@ -4,6 +4,8 @@ const { encryptSecret } = require('./social-crypto');
 
 const SOCIAL_ACCOUNT_COLLECTION = 'socialAccounts';
 const SOCIAL_PUBLISH_JOB_COLLECTION = 'socialPublishJobs';
+const SOCIAL_PUBLISH_EVENT_SUBCOLLECTION = 'events';
+const SOCIAL_PUBLISH_LEASE_DURATION_MS = 5 * 60 * 1000;
 
 function timestamp() {
   return admin.firestore.FieldValue.serverTimestamp();
@@ -13,6 +15,17 @@ function toIsoString(value) {
   if (value instanceof Date) return value.toISOString();
   if (typeof value === 'string') return value;
   return value?.toDate?.()?.toISOString?.() || null;
+}
+
+function toDate(value) {
+  if (value instanceof Date) return value;
+  if (typeof value === 'string' || typeof value === 'number') {
+    const parsed = new Date(value);
+    return Number.isNaN(parsed.getTime()) ? null : parsed;
+  }
+
+  const firestoreDate = value?.toDate?.();
+  return firestoreDate instanceof Date ? firestoreDate : null;
 }
 
 function sanitizePlatform(platform) {
@@ -177,8 +190,12 @@ async function disconnectOwnedSocialAccount(db, userId, socialAccountId) {
 
 function serializePublishJob(doc) {
   const data = doc.data() || {};
+  return serializePublishJobData(data, doc.id);
+}
+
+function serializePublishJobData(data = {}, publishJobId = null) {
   return {
-    publishJobId: doc.id,
+    publishJobId,
     userId: data.userId || null,
     storyId: data.storyId || null,
     takeReportId: data.takeReportId || null,
@@ -187,9 +204,15 @@ function serializePublishJob(doc) {
     platform: data.platform || null,
     publishMode: data.publishMode || null,
     status: data.status || null,
+    statusMessage: data.statusMessage || null,
+    platformStatus: data.platformStatus || null,
     caption: data.caption || '',
     platformOptions: data.platformOptions || {},
     mediaSnapshot: data.mediaSnapshot || {},
+    platformPublishId: data.platformPublishId || null,
+    platformContainerId: data.platformContainerId || null,
+    platformPostId: data.platformPostId || null,
+    platformPermalink: data.platformPermalink || null,
     attemptCount: data.attemptCount || 0,
     lastError: data.lastError || null,
     createdAt: toIsoString(data.createdAt),
@@ -197,6 +220,8 @@ function serializePublishJob(doc) {
     queuedAt: toIsoString(data.queuedAt),
     startedAt: toIsoString(data.startedAt),
     completedAt: toIsoString(data.completedAt),
+    lastPolledAt: toIsoString(data.lastPolledAt),
+    nextPollAt: toIsoString(data.nextPollAt),
   };
 }
 
@@ -212,6 +237,8 @@ async function createSocialPublishJob(db, userId, payload) {
     platform,
     publishMode: payload.publishMode,
     status: 'queued',
+    statusMessage: payload.statusMessage || 'Queued for publishing',
+    platformStatus: null,
     caption: payload.caption || '',
     platformOptions: payload.platformOptions || {},
     mediaSnapshot: {
@@ -230,6 +257,8 @@ async function createSocialPublishJob(db, userId, payload) {
     platformPermalink: null,
     attemptCount: 0,
     lastError: null,
+    processingLeaseOwner: null,
+    processingLeaseExpiresAt: null,
     queuedAt: timestamp(),
     startedAt: null,
     completedAt: null,
@@ -240,23 +269,19 @@ async function createSocialPublishJob(db, userId, payload) {
   };
 
   await db.collection(SOCIAL_PUBLISH_JOB_COLLECTION).doc(publishJobId).set(publishJobDoc);
-  await db.collection(SOCIAL_PUBLISH_JOB_COLLECTION).doc(publishJobId)
-    .collection('events')
-    .doc(uuidv4())
-    .set({
-      type: 'job_created',
-      status: 'queued',
-      message: `Queued ${platform} publish job for take ${payload.takeReportId}`,
-      platformCode: null,
-      httpStatus: 0,
-      attempt: 0,
-      payloadRedacted: {
-        storyId: payload.storyId,
-        takeReportId: payload.takeReportId,
-        socialAccountId: payload.socialAccountId,
-      },
-      createdAt: timestamp(),
-    });
+  await appendSocialPublishJobEvent(db, publishJobId, {
+    type: 'job_created',
+    status: 'queued',
+    message: `Queued ${platform} publish job for take ${payload.takeReportId}`,
+    platformCode: null,
+    httpStatus: 0,
+    attempt: 0,
+    payloadRedacted: {
+      storyId: payload.storyId,
+      takeReportId: payload.takeReportId,
+      socialAccountId: payload.socialAccountId,
+    },
+  });
 
   return {
     publishJobId,
@@ -267,33 +292,159 @@ async function createSocialPublishJob(db, userId, payload) {
   };
 }
 
-async function getOwnedPublishJob(db, userId, publishJobId) {
+async function appendSocialPublishJobEvent(db, publishJobId, event) {
+  await db.collection(SOCIAL_PUBLISH_JOB_COLLECTION)
+    .doc(publishJobId)
+    .collection(SOCIAL_PUBLISH_EVENT_SUBCOLLECTION)
+    .doc(uuidv4())
+    .set({
+      type: event.type || 'job_event',
+      status: event.status || null,
+      message: event.message || null,
+      platformCode: event.platformCode || null,
+      httpStatus: Number.isFinite(event.httpStatus) ? event.httpStatus : 0,
+      attempt: Number.isFinite(event.attempt) ? event.attempt : 0,
+      payloadRedacted: event.payloadRedacted || null,
+      createdAt: timestamp(),
+    });
+}
+
+async function getSocialPublishJob(db, publishJobId) {
   const doc = await db.collection(SOCIAL_PUBLISH_JOB_COLLECTION).doc(publishJobId).get();
   if (!doc.exists) return null;
 
-  const data = doc.data() || {};
-  if (data.userId !== userId) return null;
-
   return {
     doc,
-    data,
+    data: doc.data() || {},
     serialized: serializePublishJob(doc),
   };
+}
+
+async function getOwnedPublishJob(db, userId, publishJobId) {
+  const publishJob = await getSocialPublishJob(db, publishJobId);
+  if (!publishJob) return null;
+  if (publishJob.data.userId !== userId) return null;
+
+  return {
+    ...publishJob,
+  };
+}
+
+async function updateSocialPublishJob(db, publishJobId, patch = {}, event = null) {
+  await db.collection(SOCIAL_PUBLISH_JOB_COLLECTION).doc(publishJobId).update({
+    ...patch,
+    updatedAt: timestamp(),
+  });
+
+  if (event) {
+    await appendSocialPublishJobEvent(db, publishJobId, event);
+  }
+}
+
+function buildLeaseClaimResult(data, publishJobId, claimed, leaseOwner, leaseExpiresAt, now) {
+  const mergedData = claimed
+    ? {
+      ...data,
+      processingLeaseOwner: leaseOwner,
+      processingLeaseExpiresAt: leaseExpiresAt,
+      updatedAt: now,
+    }
+    : data;
+
+  return {
+    claimed,
+    data: mergedData,
+    serialized: serializePublishJobData(mergedData, publishJobId),
+  };
+}
+
+function evaluateLeaseClaim(snapshot, publishJobId, leaseOwner, leaseExpiresAt, now) {
+  if (!snapshot.exists) {
+    return {
+      patch: null,
+      result: null,
+    };
+  }
+
+  const data = snapshot.data() || {};
+  const status = data.status || null;
+  const currentLeaseExpiresAt = toDate(data.processingLeaseExpiresAt);
+  const hasActiveLease = Boolean(
+    data.processingLeaseOwner &&
+    currentLeaseExpiresAt &&
+    currentLeaseExpiresAt.getTime() > now.getTime()
+  );
+
+  if (status === 'completed' || status === 'failed' || data.platformPublishId || hasActiveLease) {
+    return {
+      patch: null,
+      result: buildLeaseClaimResult(data, publishJobId, false, leaseOwner, leaseExpiresAt, now),
+    };
+  }
+
+  return {
+    patch: {
+      processingLeaseOwner: leaseOwner,
+      processingLeaseExpiresAt: leaseExpiresAt,
+      updatedAt: timestamp(),
+    },
+    result: buildLeaseClaimResult(data, publishJobId, true, leaseOwner, leaseExpiresAt, now),
+  };
+}
+
+async function claimSocialPublishJobLease(db, publishJobId, options = {}) {
+  const leaseOwner = options.leaseOwner || uuidv4();
+  const leaseDurationMs = Number.isFinite(options.leaseDurationMs) && options.leaseDurationMs > 0
+    ? options.leaseDurationMs
+    : SOCIAL_PUBLISH_LEASE_DURATION_MS;
+  const now = new Date();
+  const leaseExpiresAt = new Date(now.getTime() + leaseDurationMs);
+  const docRef = db.collection(SOCIAL_PUBLISH_JOB_COLLECTION).doc(publishJobId);
+
+  if (typeof db.runTransaction === 'function') {
+    let claimResult = null;
+
+    await db.runTransaction(async (transaction) => {
+      const snapshot = await transaction.get(docRef);
+      const evaluated = evaluateLeaseClaim(snapshot, publishJobId, leaseOwner, leaseExpiresAt, now);
+      claimResult = evaluated.result;
+      if (evaluated.patch) {
+        transaction.update(docRef, evaluated.patch);
+      }
+    });
+
+    return claimResult;
+  }
+
+  const snapshot = await docRef.get();
+  const evaluated = evaluateLeaseClaim(snapshot, publishJobId, leaseOwner, leaseExpiresAt, now);
+  if (evaluated.patch) {
+    await docRef.update(evaluated.patch);
+  }
+
+  return evaluated.result;
 }
 
 module.exports = {
   SOCIAL_ACCOUNT_COLLECTION,
   SOCIAL_PUBLISH_JOB_COLLECTION,
+  SOCIAL_PUBLISH_EVENT_SUBCOLLECTION,
+  SOCIAL_PUBLISH_LEASE_DURATION_MS,
   createSocialAccount,
   listSocialAccounts,
   getOwnedSocialAccount,
   disconnectOwnedSocialAccount,
   upsertConnectedSocialAccount,
   createSocialPublishJob,
+  appendSocialPublishJobEvent,
+  claimSocialPublishJobLease,
+  getSocialPublishJob,
   getOwnedPublishJob,
+  updateSocialPublishJob,
   serializeSocialAccount,
   serializeSocialAccountStatusData,
   serializePublishJob,
+  serializePublishJobData,
   sanitizePlatform,
   normalizeScopes,
   toIsoString,

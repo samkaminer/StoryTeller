@@ -69,14 +69,14 @@ function createMemoryDb() {
   };
 }
 
-function createApp(db, fetchImpl) {
+function createApp(db, fetchImpl, routerOptions = {}) {
   const app = express();
   app.use(express.json());
   app.use((req, _res, next) => {
     req.session = { userId: 'user-123', email: 'user@example.com' };
     next();
   });
-  app.use('/api/social', createSocialRouter({ db, fetchImpl }));
+  app.use('/api/social', createSocialRouter({ db, fetchImpl, ...routerOptions }));
   return app;
 }
 
@@ -135,6 +135,52 @@ describe('social connected account routes', () => {
     expect(storedState.takeReportId).toBe('take-456');
     expect(storedState.redirectPath).toBe('/story-result.html?storyId=story-123&takeId=take-456');
     expect(storedState.codeVerifier).toBeNull();
+  });
+
+  it('reports provider setup status in the connected accounts payload', async () => {
+    const db = createMemoryDb();
+    const app = createApp(db, jest.fn());
+
+    const response = await request(app).get('/api/social/accounts');
+
+    expect(response.status).toBe(200);
+    expect(response.body.platformConfigs.tiktok.configured).toBe(true);
+    expect(response.body.platformConfigs.tiktok.missingEnvVars).toEqual([]);
+    expect(response.body.platformConfigs.instagram.configured).toBe(true);
+    expect(response.body.platformConfigs.instagram.missingEnvVars).toEqual([]);
+  });
+
+  it('returns missing env vars when TikTok OAuth is not configured', async () => {
+    delete process.env.TIKTOK_CLIENT_KEY;
+    delete process.env.TIKTOK_CLIENT_SECRET;
+    delete process.env.TIKTOK_REDIRECT_URI;
+    delete process.env.SOCIAL_TOKEN_ENCRYPTION_KEY_BASE64;
+
+    const db = createMemoryDb();
+    const app = createApp(db, jest.fn());
+
+    const response = await request(app)
+      .post('/api/social/tiktok/connect/start')
+      .send({});
+
+    expect(response.status).toBe(500);
+    expect(response.body.error).toBe('TikTok OAuth is not configured');
+    expect(response.body.missingEnvVars).toEqual(expect.arrayContaining([
+      'TIKTOK_CLIENT_KEY',
+      'TIKTOK_CLIENT_SECRET',
+      'TIKTOK_REDIRECT_URI',
+      'SOCIAL_TOKEN_ENCRYPTION_KEY_BASE64',
+    ]));
+
+    const accountsResponse = await request(app).get('/api/social/accounts');
+    expect(accountsResponse.status).toBe(200);
+    expect(accountsResponse.body.platformConfigs.tiktok.configured).toBe(false);
+    expect(accountsResponse.body.platformConfigs.tiktok.missingEnvVars).toEqual(expect.arrayContaining([
+      'TIKTOK_CLIENT_KEY',
+      'TIKTOK_CLIENT_SECRET',
+      'TIKTOK_REDIRECT_URI',
+      'SOCIAL_TOKEN_ENCRYPTION_KEY_BASE64',
+    ]));
   });
 
   it('drops non-relative redirect paths from OAuth state', async () => {
@@ -332,5 +378,84 @@ describe('social connected account routes', () => {
     expect(accountsResponse.body.platforms.tiktok.connected).toBe(false);
     expect(accountsResponse.body.accounts[0].status).toBe('disconnected');
     expect(accountsResponse.body.accounts[0].hasRefreshToken).toBe(false);
+  });
+
+  it('refreshes TikTok publish status before returning a publish job payload', async () => {
+    const db = createMemoryDb();
+    const storage = { bucket: jest.fn() };
+    const publishJobStatusSync = jest.fn(async () => ({
+      publishJobId: 'publish-1',
+      status: 'awaiting_user_action',
+      statusMessage: 'Draft delivered to TikTok. Open TikTok to review, edit, and post it.',
+      platformStatus: 'SEND_TO_USER_INBOX',
+      platformPublishId: 'v_inbox_file~123',
+      lastError: null,
+    }));
+    const app = createApp(db, jest.fn(), {
+      publishJobStatusSync,
+      storage,
+      bucketName: 'test-bucket',
+    });
+
+    db._collections.socialPublishJobs.set('publish-1', {
+      userId: 'user-123',
+      platform: 'tiktok',
+      publishMode: 'tiktok_draft',
+      status: 'processing',
+      platformPublishId: 'v_inbox_file~123',
+      createdAt: new Date('2026-06-04T12:00:00.000Z'),
+      updatedAt: new Date('2026-06-04T12:00:00.000Z'),
+    });
+
+    const response = await request(app)
+      .get('/api/social/publishes/publish-1');
+
+    expect(response.status).toBe(200);
+    expect(publishJobStatusSync).toHaveBeenCalledWith(expect.objectContaining({
+      db,
+      storage,
+      defaultBucketName: 'test-bucket',
+      publishJobId: 'publish-1',
+    }));
+    expect(response.body.publishJob.status).toBe('awaiting_user_action');
+    expect(response.body.publishJob.platformStatus).toBe('SEND_TO_USER_INBOX');
+    expect(response.body.publishJob.statusMessage).toContain('Draft delivered to TikTok');
+  });
+
+  it('refreshes Instagram publish status before returning a publish job payload', async () => {
+    const db = createMemoryDb();
+    const publishJobStatusSync = jest.fn(async () => ({
+      publishJobId: 'publish-2',
+      status: 'completed',
+      statusMessage: 'Instagram Reel published.',
+      platformStatus: 'PUBLISHED',
+      platformContainerId: 'ig-container-1',
+      platformPostId: 'ig-media-1',
+      lastError: null,
+    }));
+    const app = createApp(db, jest.fn(), { publishJobStatusSync });
+
+    db._collections.socialPublishJobs.set('publish-2', {
+      userId: 'user-123',
+      platform: 'instagram',
+      publishMode: 'instagram_reel',
+      status: 'processing',
+      platformContainerId: 'ig-container-1',
+      createdAt: new Date('2026-06-08T12:00:00.000Z'),
+      updatedAt: new Date('2026-06-08T12:00:00.000Z'),
+    });
+
+    const response = await request(app)
+      .get('/api/social/publishes/publish-2');
+
+    expect(response.status).toBe(200);
+    expect(publishJobStatusSync).toHaveBeenCalledWith(expect.objectContaining({
+      db,
+      publishJobId: 'publish-2',
+    }));
+    expect(response.body.publishJob.status).toBe('completed');
+    expect(response.body.publishJob.platformStatus).toBe('PUBLISHED');
+    expect(response.body.publishJob.platformContainerId).toBe('ig-container-1');
+    expect(response.body.publishJob.platformPostId).toBe('ig-media-1');
   });
 });
