@@ -140,12 +140,151 @@
       max-width: 320px;
     }
 
-    /* ── SHARE ───────────────────────────────────────────────── */
-    .share-section { width: 100%; max-width: 320px; }
+    /* ── PUBLISH + SHARE ─────────────────────────────────────── */
+    .hidden { display: none !important; }
     .share-label {
       font-size: 0.6875rem; font-weight: 500; letter-spacing: 0.1em;
       text-transform: uppercase; color: var(--ink);
-      text-align: center; margin-bottom: 1rem;
+      text-align: center;
+    }
+    .publish-section,
+    .manual-share-section {
+      width: 100%;
+      max-width: 320px;
+      display: flex;
+      flex-direction: column;
+      gap: 0.9rem;
+    }
+    .publish-sub {
+      font-size: 0.8125rem;
+      color: var(--muted);
+      text-align: center;
+      line-height: 1.5;
+    }
+    .publish-grid {
+      display: grid;
+      gap: 0.85rem;
+    }
+    .publish-card {
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: 18px;
+      padding: 1rem;
+      display: flex;
+      flex-direction: column;
+      gap: 0.85rem;
+      box-shadow: 0 10px 20px rgba(28, 22, 16, 0.04);
+    }
+    .publish-card-head {
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 0.75rem;
+    }
+    .publish-card-title {
+      font-family: var(--fd);
+      font-size: 1rem;
+      letter-spacing: -0.01em;
+    }
+    .publish-card-summary {
+      font-size: 0.84rem;
+      color: var(--text);
+      line-height: 1.45;
+    }
+    .publish-card-meta,
+    .publish-card-status-text {
+      font-size: 0.78rem;
+      color: var(--muted);
+      line-height: 1.45;
+    }
+    .publish-card-status {
+      display: flex;
+      flex-direction: column;
+      gap: 0.45rem;
+      padding-top: 0.75rem;
+      border-top: 1px solid rgba(217, 208, 184, 0.9);
+    }
+    .publish-badge {
+      display: inline-flex;
+      align-items: center;
+      align-self: flex-start;
+      padding: 0.28rem 0.6rem;
+      border-radius: 999px;
+      border: 1px solid var(--border);
+      font-size: 0.6875rem;
+      font-weight: 600;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      background: rgba(255, 255, 255, 0.35);
+      color: var(--text);
+    }
+    .publish-badge.pending,
+    .publish-badge.processing {
+      border-color: #7A6E5B;
+      background: rgba(122, 110, 91, 0.12);
+      color: #55493B;
+    }
+    .publish-badge.success {
+      border-color: #668455;
+      background: rgba(102, 132, 85, 0.12);
+      color: #446137;
+    }
+    .publish-badge.error {
+      border-color: #8C3B2A;
+      background: rgba(140, 59, 42, 0.12);
+      color: #8C3B2A;
+    }
+    .publish-badge.warning {
+      border-color: #A97828;
+      background: rgba(169, 120, 40, 0.12);
+      color: #7F5A17;
+    }
+    .publish-card-btn {
+      width: 100%;
+      padding: 0.85rem 1rem;
+      border: none;
+      border-radius: 999px;
+      background: var(--ink);
+      color: #fff;
+      font-family: var(--fu);
+      font-size: 0.95rem;
+      font-weight: 500;
+      cursor: pointer;
+      transition: opacity 0.15s, transform 0.15s;
+    }
+    .publish-card-btn:hover { opacity: 0.88; transform: translateY(-1px); }
+    .publish-card-btn:disabled {
+      opacity: 0.55;
+      cursor: not-allowed;
+      transform: none;
+    }
+    .publish-card-btn.secondary {
+      background: transparent;
+      color: var(--text);
+      border: 1px solid var(--border);
+    }
+    .publish-feedback,
+    .share-help {
+      min-height: 1.2rem;
+      font-size: 0.78rem;
+      color: var(--muted);
+      text-align: center;
+      line-height: 1.45;
+    }
+    .publish-feedback.error,
+    .share-help.error { color: #8C3B2A; }
+    .publish-feedback.success { color: #446137; }
+    .manual-share-header {
+      display: flex;
+      flex-direction: column;
+      gap: 0.35rem;
+      align-items: center;
+    }
+    .manual-share-sub {
+      font-size: 0.78rem;
+      color: var(--muted);
+      text-align: center;
+      line-height: 1.45;
     }
     .share-row {
       display: flex; gap: 0.75rem; align-items: center; justify-content: center;
@@ -174,15 +313,6 @@
       transition: opacity 0.2s;
     }
     .copy-toast.show { opacity: 1; }
-    .share-help {
-      min-height: 1.2rem;
-      margin-top: 0.85rem;
-      font-size: 0.75rem;
-      color: var(--muted);
-      text-align: center;
-      line-height: 1.4;
-    }
-    .share-help.error { color: #8C3B2A; }
 
     /* ── RETAKE ──────────────────────────────────────────────── */
     .retake-section { width: 100%; max-width: 320px; text-align: center; }
@@ -229,11 +359,165 @@
     .overlay-cancel { font-size: 0.875rem; color: var(--muted); background: none; border: none; cursor: pointer; text-decoration: underline; }
     .overlay-cancel:hover { color: var(--text); }
 
+    /* ── PUBLISH MODAL ───────────────────────────────────────── */
+    .modal-overlay {
+      position: fixed;
+      inset: 0;
+      background: rgba(28, 22, 16, 0.75);
+      z-index: 240;
+      display: flex;
+      align-items: flex-end;
+      justify-content: center;
+      padding: 1rem;
+    }
+    .publish-modal {
+      width: min(100%, 420px);
+      max-height: calc(100dvh - 2rem);
+      overflow: auto;
+      background: var(--bg);
+      border-radius: 24px 24px 18px 18px;
+      padding: 1.25rem 1.25rem 1.5rem;
+      display: flex;
+      flex-direction: column;
+      gap: 1rem;
+      box-shadow: 0 24px 64px rgba(28, 22, 16, 0.24);
+    }
+    .publish-modal-header {
+      display: flex;
+      justify-content: space-between;
+      gap: 1rem;
+      align-items: flex-start;
+    }
+    .publish-modal-kicker {
+      font-size: 0.6875rem;
+      font-weight: 600;
+      letter-spacing: 0.1em;
+      text-transform: uppercase;
+      color: var(--ink);
+      margin-bottom: 0.3rem;
+    }
+    .publish-close {
+      width: 40px;
+      height: 40px;
+      border-radius: 50%;
+      border: 1px solid var(--border);
+      background: var(--bg-card);
+      color: var(--text);
+      font-size: 1.25rem;
+      line-height: 1;
+      cursor: pointer;
+      flex-shrink: 0;
+    }
+    .publish-preview {
+      display: grid;
+      grid-template-columns: 88px 1fr;
+      gap: 0.85rem;
+      align-items: center;
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: 18px;
+      padding: 0.8rem;
+    }
+    .publish-preview video {
+      width: 100%;
+      aspect-ratio: 9 / 16;
+      border-radius: 14px;
+      object-fit: cover;
+      background: #1C1610;
+      display: block;
+    }
+    .publish-preview-title {
+      font-family: var(--fd);
+      font-size: 1rem;
+      line-height: 1.3;
+    }
+    .publish-preview-meta {
+      margin-top: 0.25rem;
+      font-size: 0.8rem;
+      color: var(--muted);
+      line-height: 1.45;
+    }
+    .publish-status-panel {
+      border-radius: 16px;
+      border: 1px solid var(--border);
+      background: rgba(234, 227, 204, 0.7);
+      padding: 0.85rem 0.9rem;
+      display: flex;
+      flex-direction: column;
+      gap: 0.45rem;
+    }
+    .publish-field {
+      display: flex;
+      flex-direction: column;
+      gap: 0.45rem;
+    }
+    .publish-field label,
+    .publish-field-title {
+      font-size: 0.82rem;
+      font-weight: 600;
+      color: var(--text);
+    }
+    .publish-input,
+    .publish-textarea {
+      width: 100%;
+      border-radius: 14px;
+      border: 1px solid var(--border);
+      background: rgba(255, 255, 255, 0.55);
+      color: var(--text);
+      font-family: var(--fu);
+      font-size: 0.95rem;
+      padding: 0.85rem 0.95rem;
+    }
+    .publish-textarea {
+      min-height: 112px;
+      resize: vertical;
+      line-height: 1.5;
+    }
+    .publish-caption-meta {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 0.75rem;
+      font-size: 0.75rem;
+      color: var(--muted);
+    }
+    .publish-option {
+      display: flex;
+      gap: 0.55rem;
+      align-items: flex-start;
+      font-size: 0.84rem;
+      color: var(--text);
+      line-height: 1.45;
+    }
+    .publish-option input {
+      margin-top: 0.18rem;
+      accent-color: var(--ink);
+    }
+    .publish-option-stack {
+      display: flex;
+      flex-direction: column;
+      gap: 0.65rem;
+    }
+    .publish-disclosure {
+      border-radius: 16px;
+      border: 1px solid var(--border);
+      background: rgba(226, 216, 186, 0.5);
+      padding: 0.85rem 0.95rem;
+      font-size: 0.78rem;
+      color: var(--muted);
+      line-height: 1.5;
+    }
+    .publish-submit-btn {
+      margin-top: 0.2rem;
+    }
+
     /* ── ERROR ───────────────────────────────────────────────── */
     #view-error .page-sub a { color: var(--ink); }
 
     @media (min-width: 640px) {
       .video-wrap { max-width: 240px; }
+      .modal-overlay { align-items: center; }
+      .publish-modal { border-radius: 24px; }
     }
   </style>
 </head>
@@ -282,8 +566,50 @@
 
       <p class="prompt-text" id="promptText"></p>
 
-      <div class="share-section">
-        <p class="share-label" id="shareLabel">Share your story</p>
+      <div class="publish-section">
+        <p class="share-label" id="publishLabel">Publish this take</p>
+        <p class="publish-sub">Send the selected take to your connected short-form accounts. Manual sharing stays available below.</p>
+
+        <div class="publish-grid">
+          <article class="publish-card" id="tiktokPublishCard">
+            <div class="publish-card-head">
+              <div>
+                <h3 class="publish-card-title">TikTok</h3>
+                <p class="publish-card-summary" id="tiktokPublishSummary">Connect TikTok to send this take as a draft upload.</p>
+              </div>
+              <span class="publish-badge" id="tiktokPublishBadge">Not connected</span>
+            </div>
+            <p class="publish-card-meta" id="tiktokPublishMeta">Draft uploads stay take-scoped and continue inside TikTok for final edits.</p>
+            <div class="publish-card-status">
+              <p class="publish-card-status-text" id="tiktokPublishStatusText">Choose a take, then connect TikTok to publish it without leaving StoryTeller.</p>
+            </div>
+            <button class="publish-card-btn" id="tiktokPublishActionBtn" type="button">Connect</button>
+          </article>
+
+          <article class="publish-card" id="instagramPublishCard">
+            <div class="publish-card-head">
+              <div>
+                <h3 class="publish-card-title">Instagram Reels</h3>
+                <p class="publish-card-summary" id="instagramPublishSummary">Connect Instagram to publish this take as a Reel.</p>
+              </div>
+              <span class="publish-badge" id="instagramPublishBadge">Not connected</span>
+            </div>
+            <p class="publish-card-meta" id="instagramPublishMeta">Reels publish directly from the selected take and use the account linked to your Meta login.</p>
+            <div class="publish-card-status">
+              <p class="publish-card-status-text" id="instagramPublishStatusText">Once connected, you can add a caption, choose Reel options, and publish the selected take.</p>
+            </div>
+            <button class="publish-card-btn" id="instagramPublishActionBtn" type="button">Connect</button>
+          </article>
+        </div>
+
+        <p class="publish-feedback" id="publishFeedback"></p>
+      </div>
+
+      <div class="manual-share-section">
+        <div class="manual-share-header">
+          <p class="share-label" id="shareLabel">Manual share fallback</p>
+          <p class="manual-share-sub">Use direct share links or download the selected take if you want to post it yourself.</p>
+        </div>
         <div class="share-row">
 
           <!-- Copy link -->
@@ -316,24 +642,8 @@
             </svg>
           </a>
 
-          <!-- Instagram -->
-          <button class="share-btn" id="instagramBtn" type="button" aria-label="Share to Instagram" title="Share to Instagram">
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-              <rect x="3.5" y="3.5" width="17" height="17" rx="5"></rect>
-              <circle cx="12" cy="12" r="4.2"></circle>
-              <circle cx="17.4" cy="6.6" r="1"></circle>
-            </svg>
-          </button>
-
-          <!-- TikTok -->
-          <button class="share-btn" id="tiktokBtn" type="button" aria-label="Share to TikTok" title="Share to TikTok">
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
-              <path d="M14.8 3.2c.5 1.6 1.5 2.8 3 3.5.9.4 1.8.6 2.7.6v3.1c-1.4 0-2.8-.3-4-.9v5.4c0 1.6-.5 2.9-1.5 4-1.2 1.3-2.8 1.9-4.8 1.9-1.5 0-2.8-.4-3.9-1.3-1.5-1.2-2.3-2.9-2.3-5 0-1.8.7-3.4 2-4.6 1.2-1.1 2.7-1.7 4.5-1.7.3 0 .7 0 1 .1v3.2a4.7 4.7 0 0 0-1.1-.1c-.9 0-1.7.3-2.3.8a2.8 2.8 0 0 0-1 2.3c0 1 .3 1.8 1 2.4.6.5 1.3.8 2.2.8.8 0 1.5-.2 2-.7.8-.6 1.1-1.6 1.1-2.8V3.2h3.4Z"></path>
-            </svg>
-          </button>
-
           <!-- Download -->
-          <a class="share-btn" id="downloadBtn" href="#" download="my-story.mp4" aria-label="Download video" title="Download video (for TikTok / Instagram)">
+          <a class="share-btn" id="downloadBtn" href="#" download="my-story.mp4" aria-label="Download video" title="Download video">
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
               <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
               <polyline points="7 10 12 15 17 10"></polyline>
@@ -369,21 +679,131 @@
     </div>
   </div>
 
+  <div id="publishOverlay" class="modal-overlay hidden">
+    <div class="publish-modal fade-in" role="dialog" aria-modal="true" aria-labelledby="publishModalTitle">
+      <div class="publish-modal-header">
+        <div>
+          <p class="publish-modal-kicker" id="publishModalKicker">Publish</p>
+          <h2 class="overlay-hl" id="publishModalTitle">Publish this take</h2>
+        </div>
+        <button class="publish-close" id="publishCloseBtn" type="button" aria-label="Close publish drawer">×</button>
+      </div>
+
+      <div class="publish-preview">
+        <video id="publishPreviewVideo" muted playsinline loop preload="metadata"></video>
+        <div>
+          <p class="publish-preview-title" id="publishPreviewTitle">Selected take</p>
+          <p class="publish-preview-meta" id="publishPreviewMeta">The selected take is the immutable publish source for this platform.</p>
+        </div>
+      </div>
+
+      <div class="publish-status-panel hidden" id="publishStatusPanel">
+        <span class="publish-badge" id="publishStatusBadge">Queued</span>
+        <p class="publish-card-status-text" id="publishStatusText"></p>
+      </div>
+
+      <div class="publish-field">
+        <label for="publishCaptionInput">Caption</label>
+        <textarea class="publish-textarea" id="publishCaptionInput" maxlength="2200" placeholder="Add a caption for this publish action."></textarea>
+        <div class="publish-caption-meta">
+          <span id="publishCaptionHint">For Instagram, this caption is submitted with the Reel.</span>
+          <span id="publishCaptionCount">0 / 2200</span>
+        </div>
+      </div>
+
+      <div class="publish-field hidden" id="instagramOptionsGroup">
+        <span class="publish-field-title">Reel options</span>
+        <label class="publish-option">
+          <input type="checkbox" id="instagramShareToFeedInput" checked>
+          <span>Also share this Reel to the Instagram feed.</span>
+        </label>
+        <div class="publish-option-stack">
+          <label class="publish-option">
+            <input type="radio" name="instagramCoverMode" value="default" checked>
+            <span>Let Instagram choose the cover frame.</span>
+          </label>
+          <label class="publish-option" id="instagramThumbnailCoverOption">
+            <input type="radio" name="instagramCoverMode" value="thumbnail">
+            <span>Use this take’s thumbnail as the cover image.</span>
+          </label>
+          <label class="publish-option">
+            <input type="radio" name="instagramCoverMode" value="offset">
+            <span>Pick a frame offset in milliseconds.</span>
+          </label>
+          <input class="publish-input" id="instagramThumbOffsetInput" type="number" min="0" step="100" value="1500" placeholder="1500" disabled>
+        </div>
+      </div>
+
+      <div class="publish-disclosure" id="publishDisclosure">
+        StoryTeller keeps the selected take fixed for this publish action and will poll for status updates after you submit.
+      </div>
+
+      <p class="publish-feedback" id="publishModalFeedback"></p>
+
+      <button class="btn-cta publish-submit-btn" id="publishSubmitBtn" type="button">Publish</button>
+    </div>
+  </div>
+
   <script>
-    const params  = new URLSearchParams(window.location.search);
+    const params = new URLSearchParams(window.location.search);
     const storyId = params.get('storyId');
+    const SOCIAL_PLATFORMS = ['tiktok', 'instagram'];
+    const maxPollAttempts = 120;
+    const publishStorageKey = 'storytellerPublishJobs:' + (storyId || 'unknown');
+
     let pollTimer = null;
     let pollAttempts = 0;
-    const maxPollAttempts = 120;
     let currentShareUrl = window.location.href;
     let currentSelectedTakeId = null;
     let currentSelectedTake = null;
+    let currentStoryData = null;
     let shareHelpTimer = null;
+    let publishFeedbackTimer = null;
+    let socialAccountsRequestInFlight = null;
+    let socialUiState = {
+      isLoading: false,
+      actionPlatform: null,
+    };
+    let socialAccountsState = createDefaultSocialAccountsState();
+    let publishJobsByPlatform = {
+      tiktok: null,
+      instagram: null,
+    };
+    let publishModalState = {
+      open: false,
+      platform: null,
+      isSubmitting: false,
+      caption: '',
+      shareToFeed: true,
+      coverMode: 'default',
+      thumbOffsetMs: 1500,
+      feedbackMessage: '',
+      feedbackType: 'info',
+    };
+
+    const publishPollState = {
+      tiktok: { timer: null, inFlight: false },
+      instagram: { timer: null, inFlight: false },
+    };
+
+    function createDefaultSocialAccountsState() {
+      return {
+        accounts: [],
+        platforms: {
+          tiktok: { connected: false, account: null },
+          instagram: { connected: false, account: null },
+        },
+        platformConfigs: {
+          tiktok: { configured: null, missingEnvVars: [], setupError: null },
+          instagram: { configured: null, missingEnvVars: [], setupError: null },
+        },
+      };
+    }
 
     function showView(name) {
-      ['loading', 'processing', 'result', 'error'].forEach(v => {
-        const el = document.getElementById('view-' + v);
-        el.classList.toggle('active', v === name);
+      ['loading', 'processing', 'result', 'error'].forEach((viewName) => {
+        const el = document.getElementById('view-' + viewName);
+        el.classList.toggle('active', viewName === name);
       });
     }
 
@@ -393,13 +813,30 @@
       showView('error');
     }
 
+    function getAuthUser() {
+      return firebase.auth().currentUser;
+    }
+
+    async function getAuthToken() {
+      const user = getAuthUser();
+      if (!user) throw new Error('You must be signed in to continue.');
+      return user.getIdToken();
+    }
+
+    async function fetchJson(url, options = {}) {
+      const response = await fetch(url, options);
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        throw new Error(payload.error || ('HTTP ' + response.status));
+      }
+      return payload;
+    }
+
     async function fetchStory() {
-      const token = await firebase.auth().currentUser.getIdToken();
-      const resp = await fetch('/api/stories/' + encodeURIComponent(storyId), {
+      const token = await getAuthToken();
+      return fetchJson('/api/stories/' + encodeURIComponent(storyId), {
         headers: { Authorization: 'Bearer ' + token },
       });
-      if (!resp.ok) throw new Error('HTTP ' + resp.status);
-      return resp.json();
     }
 
     function getVideoSignedUrl(data) {
@@ -411,7 +848,7 @@
     }
 
     function getStoryTakes(data) {
-      if (Array.isArray(data.takes) && data.takes.length) return data.takes;
+      if (Array.isArray(data?.takes) && data.takes.length) return data.takes;
 
       const legacyVideoSignedUrl = getVideoSignedUrl(data);
       if (!legacyVideoSignedUrl) return [];
@@ -424,17 +861,19 @@
         videoSignedUrl: legacyVideoSignedUrl,
         thumbnailSignedUrl: data.thumbnailSignedUrl || null,
         audioSignedUrl: data.audioSignedUrl || null,
+        finalVideoGcs: data.finalVideoGcs || null,
+        thumbnailGcs: data.thumbnailGcs || null,
         isLatest: true,
       }];
     }
 
     function getLatestTake(data) {
       const takes = getStoryTakes(data);
-      return takes.find(take => take && take.isLatest) || takes[0] || null;
+      return takes.find((take) => take && take.isLatest) || takes[0] || null;
     }
 
     function getAvailableTakes(data) {
-      return getStoryTakes(data).filter(take => take && take.videoSignedUrl);
+      return getStoryTakes(data).filter((take) => take && take.videoSignedUrl);
     }
 
     function buildShareUrl(selectedTake, availableTakeCount) {
@@ -487,7 +926,7 @@
     function showShareHelp(message, isError = false) {
       const shareHelp = document.getElementById('shareHelp');
       shareHelp.textContent = message || '';
-      shareHelp.classList.toggle('error', !!isError);
+      shareHelp.classList.toggle('error', Boolean(isError));
       if (shareHelpTimer) clearTimeout(shareHelpTimer);
       if (message) {
         shareHelpTimer = setTimeout(() => {
@@ -497,90 +936,378 @@
       }
     }
 
+    function setPublishFeedback(message, type = 'info') {
+      const feedbackEl = document.getElementById('publishFeedback');
+      feedbackEl.textContent = message || '';
+      feedbackEl.classList.remove('error', 'success');
+      if (type === 'error') feedbackEl.classList.add('error');
+      if (type === 'success') feedbackEl.classList.add('success');
+      if (publishFeedbackTimer) clearTimeout(publishFeedbackTimer);
+      if (message) {
+        publishFeedbackTimer = setTimeout(() => {
+          feedbackEl.textContent = '';
+          feedbackEl.classList.remove('error', 'success');
+        }, 6000);
+      }
+    }
+
     function getPlatformLabel(platform) {
       return platform === 'instagram' ? 'Instagram' : 'TikTok';
     }
 
-    function getPlatformUrl(platform) {
-      return platform === 'instagram' ? 'https://www.instagram.com/' : 'https://www.tiktok.com/';
+    function getPlatformState(platform) {
+      return socialAccountsState.platforms?.[platform] || { connected: false, account: null };
     }
 
-    function triggerVideoDownload(objectUrl, filename = 'my-story.mp4') {
-      const link = document.createElement('a');
-      link.href = objectUrl;
-      link.download = filename;
-      link.rel = 'noopener';
-      document.body.appendChild(link);
-      link.click();
-      link.remove();
-    }
-
-    async function fetchSharableVideo(videoUrl, platform) {
-      if (!videoUrl) throw new Error('Missing video URL');
-      const response = await fetch(videoUrl);
-      if (!response.ok) throw new Error('Video download failed with HTTP ' + response.status);
-      const blob = await response.blob();
-      const mimeType = blob.type || 'video/mp4';
-      const extension = mimeType.includes('webm') ? 'webm' : 'mp4';
-      const filename = 'storyteller-' + platform + '-share.' + extension;
-      const file = typeof File === 'function'
-        ? new File([blob], filename, { type: mimeType })
-        : null;
-
-      return {
-        blob,
-        file,
-        filename,
+    function getPlatformConfig(platform) {
+      return socialAccountsState.platformConfigs?.[platform] || {
+        configured: null,
+        missingEnvVars: [],
+        setupError: null,
       };
     }
 
-    async function shareToShortVideoPlatform(platform) {
-      const take = currentSelectedTake;
-      const platformLabel = getPlatformLabel(platform);
-      if (!take?.videoSignedUrl) {
-        showShareHelp('This take is still processing.', true);
+    function getPlatformAccountLabel(account, platform) {
+      if (!account) return getPlatformLabel(platform);
+      if (account.username) return '@' + account.username;
+      if (account.displayName) return account.displayName;
+      return getPlatformLabel(platform) + ' account';
+    }
+
+    function formatConnectionStatus(status, connected) {
+      if (connected || status === 'active') return 'Connected';
+      if (status === 'reauth_required') return 'Reconnect needed';
+      if (status === 'revoked') return 'Access revoked';
+      if (status === 'disconnected') return 'Disconnected';
+      return 'Not connected';
+    }
+
+    function getTakeLabelById(takeId) {
+      const takes = getAvailableTakes(currentStoryData || {});
+      if (!takeId || !takes.length) return 'Selected take';
+      const index = takes.findIndex((take) => (
+        take.reportId === takeId || take.takeId === takeId || take.responseDocId === takeId
+      ));
+      if (index === -1) return 'Selected take';
+      return formatTakeLabel(index, takes.length);
+    }
+
+    function getSelectedTakeDescriptor(take) {
+      if (!take) return 'Selected take';
+      const label = getTakeLabelById(take.reportId || take.takeId);
+      return take.isLatest ? (label + ' • newest recording') : label;
+    }
+
+    function getStoredPublishJobIds() {
+      try {
+        const parsed = JSON.parse(sessionStorage.getItem(publishStorageKey) || '{}');
+        return (parsed && typeof parsed === 'object') ? parsed : {};
+      } catch (_error) {
+        return {};
+      }
+    }
+
+    function rememberPublishJobId(platform, publishJobId) {
+      const stored = getStoredPublishJobIds();
+      stored[platform] = publishJobId;
+      sessionStorage.setItem(publishStorageKey, JSON.stringify(stored));
+    }
+
+    function clearStoredPublishJobId(platform) {
+      const stored = getStoredPublishJobIds();
+      delete stored[platform];
+      sessionStorage.setItem(publishStorageKey, JSON.stringify(stored));
+    }
+
+    function isFinalPublishStatus(status) {
+      return status === 'awaiting_user_action' || status === 'completed' || status === 'failed';
+    }
+
+    function getPublishJobPresentation(platform, job) {
+      if (!job) return null;
+      const message = job.lastError?.message || job.statusMessage || '';
+
+      if (job.status === 'queued') {
+        return { label: 'Queued', tone: 'pending', message: message || 'Queued for publishing.' };
+      }
+
+      if (job.status === 'processing') {
+        const uploadHint = /upload/i.test(message) || /UPLOAD/i.test(job.platformStatus || '');
+        return {
+          label: uploadHint ? 'Uploading' : 'Processing',
+          tone: 'processing',
+          message: message || 'Publishing is in progress.',
+        };
+      }
+
+      if (job.status === 'awaiting_user_action') {
+        return {
+          label: platform === 'tiktok' ? 'Ready in TikTok' : 'Ready',
+          tone: 'success',
+          message: message || 'Your publish is waiting for final action in the destination app.',
+        };
+      }
+
+      if (job.status === 'completed') {
+        return {
+          label: platform === 'instagram' ? 'Published' : 'Completed',
+          tone: 'success',
+          message: message || 'Your publish completed successfully.',
+        };
+      }
+
+      if (job.status === 'failed') {
+        return {
+          label: 'Failed',
+          tone: 'error',
+          message: message || 'Publishing failed.',
+        };
+      }
+
+      return {
+        label: 'Processing',
+        tone: 'processing',
+        message: message || 'Publishing is in progress.',
+      };
+    }
+
+    function stopPublishPolling(platform) {
+      const pollState = publishPollState[platform];
+      if (pollState?.timer) {
+        clearTimeout(pollState.timer);
+        pollState.timer = null;
+      }
+      if (pollState) {
+        pollState.inFlight = false;
+      }
+    }
+
+    function stopAllPublishPolling() {
+      SOCIAL_PLATFORMS.forEach(stopPublishPolling);
+    }
+
+    async function fetchPublishStatus(publishJobId) {
+      const token = await getAuthToken();
+      const payload = await fetchJson('/api/social/publishes/' + encodeURIComponent(publishJobId), {
+        headers: { Authorization: 'Bearer ' + token },
+      });
+      return payload.publishJob || null;
+    }
+
+    async function pollPublishJob(platform, publishJobId) {
+      const pollState = publishPollState[platform];
+      const activeJobId = publishJobId || publishJobsByPlatform[platform]?.publishJobId;
+      if (!pollState || !activeJobId || pollState.inFlight) return;
+
+      pollState.inFlight = true;
+
+      try {
+        const job = await fetchPublishStatus(activeJobId);
+        if (!job) {
+          clearStoredPublishJobId(platform);
+          publishJobsByPlatform[platform] = null;
+          renderPublishCards();
+          renderPublishModal();
+          return;
+        }
+
+        publishJobsByPlatform[platform] = job;
+        rememberPublishJobId(platform, job.publishJobId);
+        renderPublishCards();
+        renderPublishModal();
+
+        if (isFinalPublishStatus(job.status)) {
+          stopPublishPolling(platform);
+          if (job.status === 'failed') {
+            setPublishFeedback(job.lastError?.message || job.statusMessage || (getPlatformLabel(platform) + ' publish failed.'), 'error');
+          } else if (job.status === 'awaiting_user_action') {
+            setPublishFeedback(job.statusMessage || 'Your TikTok draft is ready for review.', 'success');
+          } else {
+            setPublishFeedback(job.statusMessage || (getPlatformLabel(platform) + ' publish completed.'), 'success');
+          }
+          return;
+        }
+
+        pollState.timer = setTimeout(() => {
+          pollPublishJob(platform, activeJobId).catch((error) => {
+            console.error('[story-result] publish poll error:', error);
+          });
+        }, 4000);
+      } catch (error) {
+        console.error('[story-result] publish status error:', error);
+        renderPublishCards();
+        renderPublishModal();
+        pollState.timer = setTimeout(() => {
+          pollPublishJob(platform, activeJobId).catch((innerError) => {
+            console.error('[story-result] publish retry poll error:', innerError);
+          });
+        }, 6000);
+      } finally {
+        pollState.inFlight = false;
+      }
+    }
+
+    function beginPublishPolling(platform, publishJobId) {
+      stopPublishPolling(platform);
+      publishPollState[platform].timer = setTimeout(() => {
+        pollPublishJob(platform, publishJobId).catch((error) => {
+          console.error('[story-result] publish start poll error:', error);
+        });
+      }, 2500);
+    }
+
+    async function restorePublishJobsFromSession() {
+      const stored = getStoredPublishJobIds();
+      const jobs = [];
+
+      for (const platform of SOCIAL_PLATFORMS) {
+        const publishJobId = stored[platform];
+        if (!publishJobId) continue;
+        try {
+          const job = await fetchPublishStatus(publishJobId);
+          if (!job) {
+            clearStoredPublishJobId(platform);
+            continue;
+          }
+          publishJobsByPlatform[platform] = job;
+          jobs.push(job);
+          if (!isFinalPublishStatus(job.status)) {
+            beginPublishPolling(platform, job.publishJobId);
+          }
+        } catch (error) {
+          console.error('[story-result] restore publish job error:', error);
+        }
+      }
+
+      renderPublishCards();
+      renderPublishModal();
+      return jobs;
+    }
+
+    async function loadSocialAccountsStatus(force = false) {
+      if (socialAccountsRequestInFlight && !force) {
+        return socialAccountsRequestInFlight;
+      }
+
+      socialUiState = { ...socialUiState, isLoading: true };
+      renderPublishCards();
+
+      socialAccountsRequestInFlight = (async () => {
+        const token = await getAuthToken();
+        const payload = await fetchJson('/api/social/accounts', {
+          headers: { Authorization: 'Bearer ' + token },
+        });
+
+        socialAccountsState = {
+          accounts: Array.isArray(payload.accounts) ? payload.accounts : [],
+          platforms: payload.platforms || createDefaultSocialAccountsState().platforms,
+          platformConfigs: payload.platformConfigs || createDefaultSocialAccountsState().platformConfigs,
+        };
+        renderPublishCards();
+        renderPublishModal();
+        return payload;
+      })();
+
+      try {
+        return await socialAccountsRequestInFlight;
+      } finally {
+        socialAccountsRequestInFlight = null;
+        socialUiState = { ...socialUiState, isLoading: false };
+        renderPublishCards();
+      }
+    }
+
+    function getPopupFeatures(width = 560, height = 720) {
+      const left = Math.max(0, Math.round((window.screen.width - width) / 2));
+      const top = Math.max(0, Math.round((window.screen.height - height) / 2));
+      return 'width=' + width + ',height=' + height + ',left=' + left + ',top=' + top + ',resizable=yes,scrollbars=yes';
+    }
+
+    function waitForSocialOAuthResult(platform, authWindow) {
+      return new Promise((resolve, reject) => {
+        let popupTimer = null;
+
+        function cleanup() {
+          window.removeEventListener('message', handleMessage);
+          if (popupTimer) clearInterval(popupTimer);
+        }
+
+        function handleMessage(event) {
+          if (event.origin !== window.location.origin) return;
+          if (!event.data || !String(event.data.type || '').startsWith('social-oauth-')) return;
+          if (event.data.platform !== platform) return;
+
+          cleanup();
+          if (authWindow && !authWindow.closed) authWindow.close();
+
+          if (event.data.type === 'social-oauth-success') {
+            resolve(event.data);
+          } else {
+            reject(new Error(event.data.error || ('Failed to connect ' + getPlatformLabel(platform))));
+          }
+        }
+
+        popupTimer = setInterval(() => {
+          if (authWindow && authWindow.closed) {
+            cleanup();
+            reject(new Error(getPlatformLabel(platform) + ' connection window was closed before it finished.'));
+          }
+        }, 400);
+
+        window.addEventListener('message', handleMessage);
+      });
+    }
+
+    async function startSocialConnect(platform, options = {}) {
+      const currentUser = getAuthUser();
+      if (!currentUser) {
+        showRecovery('You need to sign in to connect a social account.', '/story.html', 'Return home');
         return;
       }
 
-      showShareHelp('Preparing your ' + platformLabel + ' share…');
-
-      const supportsNativeShare = typeof navigator.share === 'function';
-      if (supportsNativeShare) {
-        try {
-          const prepared = await fetchSharableVideo(take.videoSignedUrl, platform);
-          const shareFile = prepared.file;
-          const canShareFiles = shareFile && (
-            typeof navigator.canShare !== 'function' ||
-            navigator.canShare({ files: [shareFile] })
-          );
-          if (canShareFiles) {
-            await navigator.share({
-              title: 'My StoryTeller video',
-              text: 'Shared from StoryTeller',
-              files: [shareFile],
-            });
-            showShareHelp(platformLabel + ' share sheet opened.');
-            return;
-          }
-        } catch (err) {
-          console.warn('[story-result] native share failed:', err);
-        }
-      }
-
-      const shareWindow = window.open(getPlatformUrl(platform), '_blank', 'noopener');
+      const takeId = currentSelectedTake?.reportId || currentSelectedTake?.takeId || null;
+      socialUiState = { ...socialUiState, actionPlatform: platform };
+      renderPublishCards();
+      setPublishFeedback('Starting ' + getPlatformLabel(platform) + ' connection…');
 
       try {
-        const prepared = await fetchSharableVideo(take.videoSignedUrl, platform);
-        const objectUrl = URL.createObjectURL(prepared.blob);
-        triggerVideoDownload(objectUrl, prepared.filename);
-        setTimeout(() => URL.revokeObjectURL(objectUrl), 60 * 1000);
-        showShareHelp('Your video is downloading. Finish posting it in ' + platformLabel + '.');
-      } catch (err) {
-        console.error('[story-result] fallback share download error:', err);
-        if (shareWindow && !shareWindow.closed) {
-          shareWindow.focus();
+        const token = await currentUser.getIdToken();
+        const payload = await fetchJson('/api/social/' + platform + '/connect/start', {
+          method: 'POST',
+          headers: {
+            Authorization: 'Bearer ' + token,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            storyId,
+            takeId,
+            redirectPath: window.location.pathname + window.location.search,
+          }),
+        });
+
+        const authWindow = window.open(
+          payload.authorizeUrl,
+          platform + 'Connect',
+          getPopupFeatures()
+        );
+
+        if (!authWindow) {
+          throw new Error('Popup blocked. Please allow popups and try again.');
         }
-        showShareHelp(platformLabel + ' opened, but the video download failed.', true);
+
+        const result = await waitForSocialOAuthResult(platform, authWindow);
+        await loadSocialAccountsStatus(true);
+        setPublishFeedback(getPlatformLabel(platform) + ' connected: ' + getPlatformAccountLabel(result.account, platform), 'success');
+
+        if (options.openDrawerOnSuccess && currentSelectedTake) {
+          openPublishDrawer(platform);
+        }
+      } catch (error) {
+        console.error('[story-result] social connect error:', error);
+        setPublishFeedback(error.message || ('Failed to connect ' + getPlatformLabel(platform)), 'error');
+      } finally {
+        socialUiState = { ...socialUiState, actionPlatform: null };
+        renderPublishCards();
       }
     }
 
@@ -603,6 +1330,7 @@
           '<span class="take-btn-title">' + formatTakeLabel(index, takes.length) + '</span>' +
           '<span class="take-btn-meta">' + (take.isLatest ? 'Newest recording' : 'Earlier recording') + '</span>';
         btn.addEventListener('click', () => {
+          closePublishDrawer();
           currentSelectedTakeId = take.reportId || take.takeId;
           renderResult(data);
         });
@@ -612,7 +1340,372 @@
       takeSection.classList.add('active');
     }
 
+    function renderPublishCards() {
+      SOCIAL_PLATFORMS.forEach((platform) => {
+        const platformState = getPlatformState(platform);
+        const platformConfig = getPlatformConfig(platform);
+        const account = platformState.account || null;
+        const button = document.getElementById(platform + 'PublishActionBtn');
+        const badge = document.getElementById(platform + 'PublishBadge');
+        const summary = document.getElementById(platform + 'PublishSummary');
+        const meta = document.getElementById(platform + 'PublishMeta');
+        const statusText = document.getElementById(platform + 'PublishStatusText');
+        const job = publishJobsByPlatform[platform];
+        const jobPresentation = getPublishJobPresentation(platform, job);
+        const label = getPlatformLabel(platform);
+        const isConfigured = platformConfig.configured !== false;
+        const isConnected = platformState.connected && account?.status === 'active';
+        const needsReconnect = account && (account.status === 'reauth_required' || account.status === 'revoked');
+        const takeReady = Boolean(currentSelectedTake?.videoSignedUrl && currentSelectedTake?.finalVideoGcs);
+        const publishBusy = Boolean(job && !isFinalPublishStatus(job.status));
+        const loadingAccounts = socialUiState.isLoading && !account && !socialAccountsState.accounts.length;
+        const selectedTakeLabel = getSelectedTakeDescriptor(currentSelectedTake);
+
+        if (summary) {
+          if (loadingAccounts) {
+            summary.textContent = 'Checking your ' + label + ' connection…';
+          } else if (!account) {
+            summary.textContent = 'Connect ' + label + ' to publish ' + (selectedTakeLabel || 'this take') + ' from StoryTeller.';
+          } else {
+            summary.textContent = label + ' account: ' + getPlatformAccountLabel(account, platform);
+          }
+        }
+
+        if (meta) {
+          if (loadingAccounts) {
+            meta.textContent = 'Loading connected-account status for this platform.';
+          } else if (!isConfigured && !account) {
+            meta.textContent = platformConfig.missingEnvVars?.length
+              ? ('Server setup is incomplete: ' + platformConfig.missingEnvVars.join(', '))
+              : (platformConfig.setupError || (label + ' is not configured on this server.'));
+          } else if (platform === 'tiktok') {
+            meta.textContent = isConnected
+              ? 'Draft uploads stay tied to the selected take and finish inside TikTok.'
+              : 'Connect TikTok to send the selected take as a draft upload.';
+          } else {
+            meta.textContent = isConnected
+              ? 'Instagram publishes the selected take as a Reel using your connected professional account.'
+              : 'Connect Instagram to publish the selected take directly as a Reel.';
+          }
+        }
+
+        if (badge) {
+          badge.className = 'publish-badge';
+          if (jobPresentation) {
+            badge.textContent = jobPresentation.label;
+            badge.classList.add(jobPresentation.tone);
+          } else if (loadingAccounts) {
+            badge.textContent = 'Loading';
+            badge.classList.add('pending');
+          } else if (!isConfigured && !account) {
+            badge.textContent = 'Setup required';
+            badge.classList.add('warning');
+          } else if (needsReconnect) {
+            badge.textContent = 'Reconnect needed';
+            badge.classList.add('warning');
+          } else if (isConnected) {
+            badge.textContent = 'Connected';
+            badge.classList.add('success');
+          } else {
+            badge.textContent = formatConnectionStatus(account?.status, false);
+            badge.classList.add('pending');
+          }
+        }
+
+        if (statusText) {
+          if (jobPresentation) {
+            const jobTake = getTakeLabelById(job?.takeReportId);
+            const takePrefix = jobTake ? (jobTake + ': ') : '';
+            statusText.textContent = takePrefix + jobPresentation.message;
+          } else if (loadingAccounts) {
+            statusText.textContent = 'Checking whether ' + label + ' is already connected for this account.';
+          } else if (!takeReady) {
+            statusText.textContent = 'This take is still processing. Publish will unlock when the video is ready.';
+          } else if (!account) {
+            statusText.textContent = 'Choose Connect to authorize ' + label + ' for this selected take.';
+          } else if (needsReconnect) {
+            statusText.textContent = 'Reconnect ' + label + ' before publishing the selected take.';
+          } else if (isConnected) {
+            statusText.textContent = 'Ready to publish ' + selectedTakeLabel + '.';
+          } else {
+            statusText.textContent = 'This ' + label + ' account is not active yet.';
+          }
+        }
+
+        if (button) {
+          let buttonLabel = 'Connect';
+          let disabled = false;
+
+          if (socialUiState.actionPlatform === platform) {
+            buttonLabel = 'Connecting…';
+            disabled = true;
+          } else if (loadingAccounts) {
+            buttonLabel = 'Loading…';
+            disabled = true;
+          } else if (!takeReady) {
+            buttonLabel = 'Take processing';
+            disabled = true;
+          } else if (!isConfigured && !account) {
+            buttonLabel = 'Unavailable';
+            disabled = true;
+          } else if (!account || account.status === 'disconnected') {
+            buttonLabel = 'Connect';
+          } else if (needsReconnect) {
+            buttonLabel = 'Reconnect';
+          } else if (publishBusy) {
+            buttonLabel = 'Publishing…';
+            disabled = true;
+          } else {
+            buttonLabel = 'Publish';
+          }
+
+          button.textContent = buttonLabel;
+          button.disabled = disabled;
+          button.classList.toggle('secondary', buttonLabel === 'Reconnect' || buttonLabel === 'Connect');
+        }
+      });
+    }
+
+    function syncPublishModalInputs() {
+      const captionInput = document.getElementById('publishCaptionInput');
+      const shareToFeedInput = document.getElementById('instagramShareToFeedInput');
+      const thumbOffsetInput = document.getElementById('instagramThumbOffsetInput');
+      const captionCount = document.getElementById('publishCaptionCount');
+      const coverModeInputs = document.querySelectorAll('input[name="instagramCoverMode"]');
+
+      captionInput.value = publishModalState.caption || '';
+      shareToFeedInput.checked = Boolean(publishModalState.shareToFeed);
+      thumbOffsetInput.value = String(publishModalState.thumbOffsetMs ?? 1500);
+      thumbOffsetInput.disabled = publishModalState.coverMode !== 'offset';
+      captionCount.textContent = String((publishModalState.caption || '').length) + ' / 2200';
+
+      coverModeInputs.forEach((input) => {
+        input.checked = input.value === publishModalState.coverMode;
+      });
+    }
+
+    function renderPublishModal() {
+      const overlay = document.getElementById('publishOverlay');
+      const platform = publishModalState.platform;
+
+      if (!publishModalState.open || !platform || !currentSelectedTake) {
+        overlay.classList.add('hidden');
+        return;
+      }
+
+      const label = getPlatformLabel(platform);
+      const account = getPlatformState(platform).account || null;
+      const job = publishJobsByPlatform[platform];
+      const jobMatchesCurrentTake = !job || !currentSelectedTake || (
+        job.takeReportId === currentSelectedTake.reportId || job.takeReportId === currentSelectedTake.takeId
+      );
+      const jobPresentation = jobMatchesCurrentTake ? getPublishJobPresentation(platform, job) : null;
+      const submitBtn = document.getElementById('publishSubmitBtn');
+      const captionHint = document.getElementById('publishCaptionHint');
+      const previewVideo = document.getElementById('publishPreviewVideo');
+      const statusPanel = document.getElementById('publishStatusPanel');
+      const statusBadge = document.getElementById('publishStatusBadge');
+      const statusText = document.getElementById('publishStatusText');
+      const instagramOptionsGroup = document.getElementById('instagramOptionsGroup');
+      const thumbnailOption = document.getElementById('instagramThumbnailCoverOption');
+      const modalFeedback = document.getElementById('publishModalFeedback');
+      const publishBusy = Boolean(job && !isFinalPublishStatus(job.status));
+
+      overlay.classList.remove('hidden');
+      document.getElementById('publishModalKicker').textContent = label;
+      document.getElementById('publishModalTitle').textContent =
+        platform === 'instagram' ? 'Publish this Reel' : 'Send this draft';
+      document.getElementById('publishPreviewTitle').textContent = getSelectedTakeDescriptor(currentSelectedTake);
+      document.getElementById('publishPreviewMeta').textContent =
+        'Publishing uses the currently selected take as an immutable source.';
+
+      if (currentSelectedTake.videoSignedUrl && previewVideo.src !== currentSelectedTake.videoSignedUrl) {
+        previewVideo.src = currentSelectedTake.videoSignedUrl;
+        previewVideo.load();
+      }
+      previewVideo.play().catch(() => {});
+
+      captionHint.textContent = platform === 'instagram'
+        ? 'For Instagram, this caption is submitted with the Reel.'
+        : 'For TikTok drafts, this caption is saved with the publish job for reference. You will still edit the final draft inside TikTok.';
+
+      document.getElementById('publishDisclosure').textContent = platform === 'instagram'
+        ? 'StoryTeller will submit this take as an Instagram Reel and continue polling Meta until the publish completes or fails.'
+        : 'StoryTeller will upload this take as a TikTok draft and continue polling until TikTok reports the draft is ready.';
+
+      instagramOptionsGroup.classList.toggle('hidden', platform !== 'instagram');
+      thumbnailOption.classList.toggle('hidden', !currentSelectedTake.thumbnailSignedUrl);
+      if (!currentSelectedTake.thumbnailSignedUrl && publishModalState.coverMode === 'thumbnail') {
+        publishModalState.coverMode = 'default';
+      }
+
+      modalFeedback.textContent = '';
+      modalFeedback.classList.remove('error', 'success');
+      if (publishModalState.feedbackMessage) {
+        modalFeedback.textContent = publishModalState.feedbackMessage;
+        if (publishModalState.feedbackType === 'error') modalFeedback.classList.add('error');
+        if (publishModalState.feedbackType === 'success') modalFeedback.classList.add('success');
+      }
+
+      if (jobPresentation) {
+        statusPanel.classList.remove('hidden');
+        statusBadge.className = 'publish-badge ' + jobPresentation.tone;
+        statusBadge.textContent = jobPresentation.label;
+        statusText.textContent = jobPresentation.message;
+      } else if (publishBusy && job) {
+        statusPanel.classList.remove('hidden');
+        statusBadge.className = 'publish-badge processing';
+        statusBadge.textContent = 'Processing';
+        statusText.textContent = job.statusMessage || 'Publishing is in progress.';
+      } else {
+        statusPanel.classList.add('hidden');
+        statusBadge.className = 'publish-badge';
+        statusBadge.textContent = '';
+        statusText.textContent = '';
+      }
+
+      syncPublishModalInputs();
+
+      const accountReady = account && account.status === 'active';
+      if (!accountReady) {
+        submitBtn.textContent = 'Connect ' + label;
+        submitBtn.disabled = false;
+      } else if (publishModalState.isSubmitting || publishBusy) {
+        submitBtn.textContent = 'Publishing…';
+        submitBtn.disabled = true;
+      } else {
+        submitBtn.textContent = platform === 'instagram' ? 'Publish Reel' : 'Send Draft to TikTok';
+        submitBtn.disabled = false;
+      }
+    }
+
+    function openPublishDrawer(platform) {
+      if (!currentSelectedTake?.videoSignedUrl) {
+        setPublishFeedback('This take is still processing. Publish will unlock once the video is ready.', 'error');
+        return;
+      }
+
+      publishModalState = {
+        ...publishModalState,
+        open: true,
+        platform,
+        isSubmitting: false,
+        caption: '',
+        shareToFeed: true,
+        coverMode: currentSelectedTake.thumbnailSignedUrl ? 'thumbnail' : 'default',
+        thumbOffsetMs: 1500,
+        feedbackMessage: '',
+        feedbackType: 'info',
+      };
+      renderPublishModal();
+      document.getElementById('publishCaptionInput').focus();
+    }
+
+    function closePublishDrawer() {
+      publishModalState = {
+        ...publishModalState,
+        open: false,
+        platform: null,
+        isSubmitting: false,
+      };
+      renderPublishModal();
+    }
+
+    function getPlatformOptionsFromModal(platform) {
+      if (platform !== 'instagram') return {};
+
+      const options = {
+        shareToFeed: Boolean(publishModalState.shareToFeed),
+      };
+
+      if (publishModalState.coverMode === 'thumbnail' && currentSelectedTake?.thumbnailSignedUrl) {
+        options.useTakeThumbnailAsCover = true;
+      } else if (publishModalState.coverMode === 'offset') {
+        options.thumbOffsetMs = Math.max(0, Math.trunc(Number(publishModalState.thumbOffsetMs) || 0));
+      }
+
+      return options;
+    }
+
+    async function submitPublishFromModal() {
+      const platform = publishModalState.platform;
+      if (!platform || !currentSelectedTake || publishModalState.isSubmitting) return;
+
+      const platformState = getPlatformState(platform);
+      const account = platformState.account || null;
+      const label = getPlatformLabel(platform);
+
+      if (!account || account.status === 'disconnected') {
+        await startSocialConnect(platform, { openDrawerOnSuccess: true });
+        return;
+      }
+
+      if (account.status !== 'active') {
+        await startSocialConnect(platform, { openDrawerOnSuccess: true });
+        return;
+      }
+
+      publishModalState = {
+        ...publishModalState,
+        isSubmitting: true,
+        feedbackMessage: '',
+        feedbackType: 'info',
+      };
+      renderPublishModal();
+
+      try {
+        const token = await getAuthToken();
+        const takeId = currentSelectedTake.reportId || currentSelectedTake.takeId;
+        const payload = await fetchJson(
+          '/api/stories/' + encodeURIComponent(storyId) +
+          '/takes/' + encodeURIComponent(takeId) +
+          '/publish/' + encodeURIComponent(platform),
+          {
+            method: 'POST',
+            headers: {
+              Authorization: 'Bearer ' + token,
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+              socialAccountId: account.socialAccountId,
+              caption: publishModalState.caption,
+              platformOptions: getPlatformOptionsFromModal(platform),
+            }),
+          }
+        );
+
+        const publishJob = payload.publishJob || null;
+        if (!publishJob?.publishJobId) {
+          throw new Error('The publish job was created, but no job ID was returned.');
+        }
+
+        publishJobsByPlatform[platform] = publishJob;
+        rememberPublishJobId(platform, publishJob.publishJobId);
+        beginPublishPolling(platform, publishJob.publishJobId);
+        publishModalState = {
+          ...publishModalState,
+          feedbackMessage: '',
+          feedbackType: 'info',
+        };
+        setPublishFeedback(label + ' publish queued for ' + getSelectedTakeDescriptor(currentSelectedTake) + '.', 'success');
+      } catch (error) {
+        console.error('[story-result] submit publish error:', error);
+        publishModalState = {
+          ...publishModalState,
+          feedbackMessage: error.message || ('Failed to publish to ' + label + '.'),
+          feedbackType: 'error',
+        };
+        setPublishFeedback(error.message || ('Failed to publish to ' + label + '.'), 'error');
+      } finally {
+        publishModalState = { ...publishModalState, isSubmitting: false };
+        renderPublishCards();
+        renderPublishModal();
+      }
+    }
+
     function renderResult(data) {
+      currentStoryData = data;
+
       const selectedTake = selectTake(data);
       const availableTakes = getAvailableTakes(data);
       const videoSignedUrl = selectedTake?.videoSignedUrl || getVideoSignedUrl(data);
@@ -627,8 +1720,10 @@
       const promptEl = document.getElementById('promptText');
       promptEl.textContent = data.promptText ? '“' + data.promptText + '”' : '';
 
+      const publishLabel = document.getElementById('publishLabel');
       const shareLabel = document.getElementById('shareLabel');
-      shareLabel.textContent = availableTakes.length > 1 ? 'Share this take' : 'Share your story';
+      publishLabel.textContent = availableTakes.length > 1 ? 'Publish this take' : 'Publish your story';
+      shareLabel.textContent = availableTakes.length > 1 ? 'Manual share this take' : 'Manual share your story';
 
       const dlBtn = document.getElementById('downloadBtn');
       if (videoSignedUrl) {
@@ -639,6 +1734,8 @@
       }
 
       updateShareActions(selectedTake, availableTakes.length);
+      renderPublishCards();
+      renderPublishModal();
 
       const retakeSection = document.getElementById('retakeSection');
       if (localStorage.getItem('retake_result_used_' + storyId)) {
@@ -649,7 +1746,7 @@
     }
 
     function shouldTreatAsPermanentFailure(data) {
-      return !!(data.mediaProcessingError || data.mediaProcessingFailedAt);
+      return Boolean(data.mediaProcessingError || data.mediaProcessingFailedAt);
     }
 
     function updateProcessingCopy(data) {
@@ -701,9 +1798,14 @@
       }
 
       showView('loading');
+      loadSocialAccountsStatus(true).catch((error) => {
+        console.error('[story-result] social accounts load error:', error);
+        setPublishFeedback(error.message || 'Unable to load connected accounts right now.', 'error');
+      });
 
       try {
         const data = await fetchStory();
+        await restorePublishJobsFromSession();
         if (await checkStoryState(data)) return;
 
         updateProcessingCopy(data);
@@ -726,12 +1828,12 @@
             const fresh = await fetchStory();
             if (await checkStoryState(fresh)) return;
             updateProcessingCopy(fresh);
-          } catch (err) {
-            console.error('[story-result] polling error:', err);
+          } catch (error) {
+            console.error('[story-result] polling error:', error);
           }
         }, 5000);
-      } catch (err) {
-        console.error('[story-result] load error:', err);
+      } catch (error) {
+        console.error('[story-result] load error:', error);
         showRecovery(
           'We couldn\'t load your story.',
           '/story-final.html?storyId=' + encodeURIComponent(storyId),
@@ -740,37 +1842,82 @@
       }
     }
 
-    // Copy link
     document.getElementById('copyBtn').addEventListener('click', () => {
       navigator.clipboard.writeText(currentShareUrl).then(() => {
         const toast = document.getElementById('copyToast');
         toast.classList.add('show');
+        showShareHelp('Story link copied.');
         setTimeout(() => toast.classList.remove('show'), 2000);
-      }).catch(() => {});
-    });
-
-    document.getElementById('instagramBtn').addEventListener('click', () => {
-      shareToShortVideoPlatform('instagram').catch((err) => {
-        console.error('[story-result] instagram share error:', err);
-        showShareHelp('Instagram share could not be prepared.', true);
+      }).catch(() => {
+        showShareHelp('Unable to copy the story link.', true);
       });
     });
 
-    document.getElementById('tiktokBtn').addEventListener('click', () => {
-      shareToShortVideoPlatform('tiktok').catch((err) => {
-        console.error('[story-result] tiktok share error:', err);
-        showShareHelp('TikTok share could not be prepared.', true);
+    document.getElementById('tiktokPublishActionBtn').addEventListener('click', async () => {
+      const platformState = getPlatformState('tiktok');
+      const account = platformState.account || null;
+      if (!account || account.status === 'disconnected' || account.status === 'reauth_required' || account.status === 'revoked') {
+        await startSocialConnect('tiktok', { openDrawerOnSuccess: true });
+        return;
+      }
+      openPublishDrawer('tiktok');
+    });
+
+    document.getElementById('instagramPublishActionBtn').addEventListener('click', async () => {
+      const platformState = getPlatformState('instagram');
+      const account = platformState.account || null;
+      if (!account || account.status === 'disconnected' || account.status === 'reauth_required' || account.status === 'revoked') {
+        await startSocialConnect('instagram', { openDrawerOnSuccess: true });
+        return;
+      }
+      openPublishDrawer('instagram');
+    });
+
+    document.getElementById('publishCloseBtn').addEventListener('click', closePublishDrawer);
+    document.getElementById('publishOverlay').addEventListener('click', (event) => {
+      if (event.target.id === 'publishOverlay') {
+        closePublishDrawer();
+      }
+    });
+
+    document.getElementById('publishCaptionInput').addEventListener('input', (event) => {
+      publishModalState = { ...publishModalState, caption: event.target.value };
+      syncPublishModalInputs();
+    });
+
+    document.getElementById('instagramShareToFeedInput').addEventListener('change', (event) => {
+      publishModalState = { ...publishModalState, shareToFeed: event.target.checked };
+      renderPublishModal();
+    });
+
+    document.querySelectorAll('input[name="instagramCoverMode"]').forEach((input) => {
+      input.addEventListener('change', (event) => {
+        publishModalState = { ...publishModalState, coverMode: event.target.value };
+        renderPublishModal();
       });
     });
 
-    // Retake flow
+    document.getElementById('instagramThumbOffsetInput').addEventListener('input', (event) => {
+      publishModalState = {
+        ...publishModalState,
+        thumbOffsetMs: Math.max(0, Math.trunc(Number(event.target.value) || 0)),
+      };
+      syncPublishModalInputs();
+    });
+
+    document.getElementById('publishSubmitBtn').addEventListener('click', () => {
+      submitPublishFromModal().catch((error) => {
+        console.error('[story-result] publish submit handler error:', error);
+      });
+    });
+
     document.getElementById('retakeBtn').addEventListener('click', () => {
       localStorage.setItem('retake_result_used_' + storyId, '1');
       document.getElementById('retakeOverlay').classList.remove('hidden');
     });
 
-    document.getElementById('retakeConfirmBtn').addEventListener('click', (e) => {
-      e.preventDefault();
+    document.getElementById('retakeConfirmBtn').addEventListener('click', (event) => {
+      event.preventDefault();
       window.location.href = '/story-final.html?storyId=' + encodeURIComponent(storyId);
     });
 
@@ -781,11 +1928,22 @@
 
     document.getElementById('signOutBtn').addEventListener('click', () => {
       if (pollTimer) clearInterval(pollTimer);
-      firebase.auth().signOut().then(() => { window.location.href = '/story.html'; });
+      stopAllPublishPolling();
+      firebase.auth().signOut().then(() => {
+        window.location.href = '/story.html';
+      });
     });
 
-    firebase.auth().onAuthStateChanged(user => {
-      if (!user) { window.location.href = '/story.html'; return; }
+    window.addEventListener('beforeunload', () => {
+      if (pollTimer) clearInterval(pollTimer);
+      stopAllPublishPolling();
+    });
+
+    firebase.auth().onAuthStateChanged((user) => {
+      if (!user) {
+        window.location.href = '/story.html';
+        return;
+      }
       loadAndPoll();
     });
   </script>
