@@ -319,10 +319,12 @@ function buildSocialPublishJobRecord(userId, payload, options = {}) {
 }
 
 function serializePublishJobData(data = {}, publishJobId = null) {
+  const canonicalTakeId = data.takeReportId || data.takeId || null;
   return {
     publishJobId,
     userId: data.userId || null,
     storyId: data.storyId || null,
+    takeId: canonicalTakeId,
     takeReportId: data.takeReportId || null,
     takeResponseDocId: data.takeResponseDocId || null,
     socialAccountId: data.socialAccountId || null,

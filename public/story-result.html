@@ -1081,7 +1081,7 @@
       const takeKey = take?.reportId || take?.takeId || null;
       if (!takeKey) return [];
       return getStoryPublishJobs()
-        .filter((job) => job && (job.takeReportId === takeKey || job.takeResponseDocId === takeKey))
+        .filter((job) => job && (job.takeId === takeKey || job.takeReportId === takeKey || job.takeResponseDocId === takeKey))
         .sort(comparePublishHistoryDesc);
     }
 
@@ -1118,7 +1118,7 @@
             const takeKey = take.reportId || take.takeId;
             return {
               ...take,
-              publishHistory: nextJobs.filter((entry) => entry.takeReportId === takeKey),
+              publishHistory: nextJobs.filter((entry) => entry.takeId === takeKey || entry.takeReportId === takeKey),
             };
           });
         }

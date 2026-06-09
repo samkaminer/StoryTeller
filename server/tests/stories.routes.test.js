@@ -570,6 +570,7 @@ describe('stories routes', () => {
 
     expect(response.status).toBe(202);
     expect(response.body.takeId).toBe(requestedTakeId);
+    expect(response.body.publishJob.takeId).toBe(requestedTakeId);
     expect(publishJobWrites).toHaveLength(1);
     expect(publishJobWrites[0].data).toMatchObject({
       userId: 'user-123',
