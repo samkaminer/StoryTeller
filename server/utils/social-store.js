@@ -6,6 +6,7 @@ const SOCIAL_ACCOUNT_COLLECTION = 'socialAccounts';
 const SOCIAL_PUBLISH_JOB_COLLECTION = 'socialPublishJobs';
 const SOCIAL_PUBLISH_EVENT_SUBCOLLECTION = 'events';
 const SOCIAL_PUBLISH_LEASE_DURATION_MS = 5 * 60 * 1000;
+const FINAL_PUBLISH_JOB_STATUSES = new Set(['awaiting_user_action', 'completed', 'failed']);
 
 function timestamp() {
   return admin.firestore.FieldValue.serverTimestamp();
@@ -26,6 +27,12 @@ function toDate(value) {
 
   const firestoreDate = value?.toDate?.();
   return firestoreDate instanceof Date ? firestoreDate : null;
+}
+
+function isDateExpired(value, skewMs = 0) {
+  const date = toDate(value);
+  if (!date) return false;
+  return date.getTime() <= (Date.now() + skewMs);
 }
 
 function sanitizePlatform(platform) {
@@ -52,13 +59,34 @@ function buildSafeMeta(meta = {}) {
   };
 }
 
+function getEffectiveSocialAccountStatus(data = {}) {
+  const storedStatus = data.status || null;
+  if (!storedStatus) return null;
+  if (storedStatus !== 'active') return storedStatus;
+  if (!data.accessToken?.ciphertext) return 'reauth_required';
+
+  if (data.platform === 'tiktok') {
+    if (isDateExpired(data.tokenExpiresAt, 5 * 60 * 1000)) {
+      const hasUsableRefreshToken = Boolean(data.refreshToken?.ciphertext) && !isDateExpired(data.refreshTokenExpiresAt, 5 * 60 * 1000);
+      return hasUsableRefreshToken ? 'active' : 'reauth_required';
+    }
+    return 'active';
+  }
+
+  if (data.platform === 'instagram') {
+    return isDateExpired(data.tokenExpiresAt, 5 * 60 * 1000) ? 'reauth_required' : 'active';
+  }
+
+  return storedStatus;
+}
+
 function serializeSocialAccountStatusData(data = {}, socialAccountId = null) {
   return {
     socialAccountId,
     platform: data.platform || null,
     displayName: data.displayName || null,
     username: data.username || null,
-    status: data.status || null,
+    status: getEffectiveSocialAccountStatus(data),
     connectedAt: toIsoString(data.connectedAt),
     updatedAt: toIsoString(data.updatedAt),
     hasRefreshToken: Boolean(data.refreshToken?.ciphertext),
@@ -188,46 +216,45 @@ async function disconnectOwnedSocialAccount(db, userId, socialAccountId) {
   };
 }
 
+async function updateSocialAccount(db, socialAccountId, patch = {}) {
+  await db.collection(SOCIAL_ACCOUNT_COLLECTION).doc(socialAccountId).update({
+    ...patch,
+    updatedAt: timestamp(),
+  });
+}
+
 function serializePublishJob(doc) {
   const data = doc.data() || {};
   return serializePublishJobData(data, doc.id);
 }
 
-function serializePublishJobData(data = {}, publishJobId = null) {
-  return {
-    publishJobId,
-    userId: data.userId || null,
-    storyId: data.storyId || null,
-    takeReportId: data.takeReportId || null,
-    takeResponseDocId: data.takeResponseDocId || null,
-    socialAccountId: data.socialAccountId || null,
-    platform: data.platform || null,
-    publishMode: data.publishMode || null,
-    status: data.status || null,
-    statusMessage: data.statusMessage || null,
-    platformStatus: data.platformStatus || null,
-    caption: data.caption || '',
-    platformOptions: data.platformOptions || {},
-    mediaSnapshot: data.mediaSnapshot || {},
-    platformPublishId: data.platformPublishId || null,
-    platformContainerId: data.platformContainerId || null,
-    platformPostId: data.platformPostId || null,
-    platformPermalink: data.platformPermalink || null,
-    attemptCount: data.attemptCount || 0,
-    lastError: data.lastError || null,
-    createdAt: toIsoString(data.createdAt),
-    updatedAt: toIsoString(data.updatedAt),
-    queuedAt: toIsoString(data.queuedAt),
-    startedAt: toIsoString(data.startedAt),
-    completedAt: toIsoString(data.completedAt),
-    lastPolledAt: toIsoString(data.lastPolledAt),
-    nextPollAt: toIsoString(data.nextPollAt),
-  };
+function isPublishJobFinalStatus(status) {
+  return FINAL_PUBLISH_JOB_STATUSES.has(status || '');
 }
 
-async function createSocialPublishJob(db, userId, payload) {
+function canRetryPublishJobData(data = {}) {
+  if ((data.status || null) !== 'failed') return false;
+  if (data.supersededByPublishJobId) return false;
+  if (data.lastError && data.lastError.retryable === false) return false;
+  return true;
+}
+
+function getPublishJobSortTime(data = {}) {
+  return toDate(data.updatedAt)
+    || toDate(data.completedAt)
+    || toDate(data.startedAt)
+    || toDate(data.createdAt)
+    || toDate(data.queuedAt)
+    || new Date(0);
+}
+
+function comparePublishJobRecordsDesc(left, right) {
+  return getPublishJobSortTime(right?.data).getTime() - getPublishJobSortTime(left?.data).getTime();
+}
+
+function buildSocialPublishJobRecord(userId, payload, options = {}) {
   const platform = sanitizePlatform(payload.platform);
-  const publishJobId = uuidv4();
+  const publishJobId = options.publishJobId || uuidv4();
   const publishJobDoc = {
     userId,
     storyId: payload.storyId,
@@ -257,6 +284,8 @@ async function createSocialPublishJob(db, userId, payload) {
     platformPermalink: null,
     attemptCount: 0,
     lastError: null,
+    retryOfPublishJobId: payload.retryOfPublishJobId || null,
+    supersededByPublishJobId: null,
     processingLeaseOwner: null,
     processingLeaseExpiresAt: null,
     queuedAt: timestamp(),
@@ -268,8 +297,7 @@ async function createSocialPublishJob(db, userId, payload) {
     updatedAt: timestamp(),
   };
 
-  await db.collection(SOCIAL_PUBLISH_JOB_COLLECTION).doc(publishJobId).set(publishJobDoc);
-  await appendSocialPublishJobEvent(db, publishJobId, {
+  const createdEvent = {
     type: 'job_created',
     status: 'queued',
     message: `Queued ${platform} publish job for take ${payload.takeReportId}`,
@@ -281,15 +309,63 @@ async function createSocialPublishJob(db, userId, payload) {
       takeReportId: payload.takeReportId,
       socialAccountId: payload.socialAccountId,
     },
-  });
+  };
 
   return {
     publishJobId,
-    ...publishJobDoc,
-    queuedAt: null,
-    createdAt: null,
-    updatedAt: null,
+    publishJobDoc,
+    createdEvent,
   };
+}
+
+function serializePublishJobData(data = {}, publishJobId = null) {
+  return {
+    publishJobId,
+    userId: data.userId || null,
+    storyId: data.storyId || null,
+    takeReportId: data.takeReportId || null,
+    takeResponseDocId: data.takeResponseDocId || null,
+    socialAccountId: data.socialAccountId || null,
+    platform: data.platform || null,
+    publishMode: data.publishMode || null,
+    status: data.status || null,
+    statusMessage: data.statusMessage || null,
+    platformStatus: data.platformStatus || null,
+    caption: data.caption || '',
+    platformOptions: data.platformOptions || {},
+    mediaSnapshot: data.mediaSnapshot || {},
+    platformPublishId: data.platformPublishId || null,
+    platformContainerId: data.platformContainerId || null,
+    platformPostId: data.platformPostId || null,
+    platformPermalink: data.platformPermalink || null,
+    attemptCount: data.attemptCount || 0,
+    lastError: data.lastError || null,
+    retryOfPublishJobId: data.retryOfPublishJobId || null,
+    supersededByPublishJobId: data.supersededByPublishJobId || null,
+    canRetry: canRetryPublishJobData(data),
+    createdAt: toIsoString(data.createdAt),
+    updatedAt: toIsoString(data.updatedAt),
+    queuedAt: toIsoString(data.queuedAt),
+    startedAt: toIsoString(data.startedAt),
+    completedAt: toIsoString(data.completedAt),
+    lastPolledAt: toIsoString(data.lastPolledAt),
+    nextPollAt: toIsoString(data.nextPollAt),
+  };
+}
+
+async function createSocialPublishJob(db, userId, payload) {
+  const { publishJobId, publishJobDoc, createdEvent } = buildSocialPublishJobRecord(userId, payload);
+  const now = new Date();
+
+  await db.collection(SOCIAL_PUBLISH_JOB_COLLECTION).doc(publishJobId).set(publishJobDoc);
+  await appendSocialPublishJobEvent(db, publishJobId, createdEvent);
+
+  return serializePublishJobData({
+    ...publishJobDoc,
+    queuedAt: now,
+    createdAt: now,
+    updatedAt: now,
+  }, publishJobId);
 }
 
 async function appendSocialPublishJobEvent(db, publishJobId, event) {
@@ -328,6 +404,41 @@ async function getOwnedPublishJob(db, userId, publishJobId) {
   return {
     ...publishJob,
   };
+}
+
+function matchesPublishJobFilters(data = {}, filters = {}) {
+  if (filters.storyId && data.storyId !== filters.storyId) return false;
+  if (filters.takeReportId && data.takeReportId !== filters.takeReportId) return false;
+  if (filters.platform && data.platform !== filters.platform) return false;
+  if (filters.publishMode && data.publishMode !== filters.publishMode) return false;
+  if (filters.socialAccountId && data.socialAccountId !== filters.socialAccountId) return false;
+  if (filters.retryOfPublishJobId && data.retryOfPublishJobId !== filters.retryOfPublishJobId) return false;
+  return true;
+}
+
+async function listOwnedPublishJobs(db, userId, filters = {}) {
+  let query = db.collection(SOCIAL_PUBLISH_JOB_COLLECTION).where('userId', '==', userId);
+  if (filters.storyId) {
+    query = query.where('storyId', '==', filters.storyId);
+  }
+
+  const snapshot = await query.get();
+  return snapshot.docs
+    .map((doc) => ({
+      doc,
+      data: doc.data() || {},
+      serialized: serializePublishJob(doc),
+    }))
+    .filter((job) => {
+      if (filters.excludePublishJobId && job.doc.id === filters.excludePublishJobId) return false;
+      return matchesPublishJobFilters(job.data, filters);
+    })
+    .sort(comparePublishJobRecordsDesc);
+}
+
+async function findLatestOwnedPublishJobForTarget(db, userId, filters = {}) {
+  const jobs = await listOwnedPublishJobs(db, userId, filters);
+  return jobs[0] || null;
 }
 
 async function updateSocialPublishJob(db, publishJobId, patch = {}, event = null) {
@@ -430,6 +541,7 @@ module.exports = {
   SOCIAL_PUBLISH_JOB_COLLECTION,
   SOCIAL_PUBLISH_EVENT_SUBCOLLECTION,
   SOCIAL_PUBLISH_LEASE_DURATION_MS,
+  FINAL_PUBLISH_JOB_STATUSES,
   createSocialAccount,
   listSocialAccounts,
   getOwnedSocialAccount,
@@ -437,9 +549,18 @@ module.exports = {
   upsertConnectedSocialAccount,
   createSocialPublishJob,
   appendSocialPublishJobEvent,
+  buildSocialPublishJobRecord,
+  canRetryPublishJobData,
   claimSocialPublishJobLease,
+  comparePublishJobRecordsDesc,
+  findLatestOwnedPublishJobForTarget,
   getSocialPublishJob,
+  getEffectiveSocialAccountStatus,
   getOwnedPublishJob,
+  isDateExpired,
+  isPublishJobFinalStatus,
+  listOwnedPublishJobs,
+  updateSocialAccount,
   updateSocialPublishJob,
   serializeSocialAccount,
   serializeSocialAccountStatusData,

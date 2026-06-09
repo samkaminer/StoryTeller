@@ -1,12 +1,18 @@
 const path = require('path');
 const fetch = require('node-fetch');
 const {
+  getEffectiveSocialAccountStatus,
   getOwnedSocialAccount,
   claimSocialPublishJobLease,
   getSocialPublishJob,
   updateSocialPublishJob,
 } = require('../utils/social-store');
-const { decryptSecret } = require('../utils/social-crypto');
+const { logSocialAudit } = require('../utils/social-audit');
+const { executePlatformRequest } = require('../utils/social-http');
+const {
+  ensureUsableSocialAccessToken,
+  handlePlatformReconnectSignal,
+} = require('./social-token-service');
 
 const DEFAULT_GRAPH_VERSION = process.env.META_GRAPH_API_VERSION || 'v23.0';
 const META_GRAPH_BASE_URL = 'https://graph.facebook.com';
@@ -222,6 +228,7 @@ async function readMetaResponse(response) {
     err.httpStatus = response.status;
     err.platformCode = uiSafeError.platformCode || null;
     err.platformSubcode = uiSafeError.platformSubcode || null;
+    err.retryAfter = response.headers?.get?.('retry-after') || null;
     err.uiSafeError = uiSafeError;
     err.responseBody = body;
     throw err;
@@ -311,45 +318,65 @@ async function markPublishJobFailed(db, publishJob, uiSafeError, eventType, extr
 }
 
 async function createInstagramReelContainer(fetchImpl, accessToken, igUserId, payload) {
-  const response = await fetchImpl(getGraphApiUrl(`${igUserId}/media`), {
-    method: 'POST',
-    headers: {
-      Authorization: `Bearer ${accessToken}`,
-      'Content-Type': 'application/json; charset=UTF-8',
-    },
-    body: JSON.stringify(payload),
-  });
+  return executePlatformRequest(async () => {
+    const response = await fetchImpl(getGraphApiUrl(`${igUserId}/media`), {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+        'Content-Type': 'application/json; charset=UTF-8',
+      },
+      body: JSON.stringify(payload),
+    });
 
-  return readMetaResponse(response);
+    return readMetaResponse(response);
+  }, {
+    audit: {
+      platform: 'instagram',
+      message: 'Create Instagram Reel container',
+    },
+  });
 }
 
 async function publishInstagramContainer(fetchImpl, accessToken, igUserId, creationId) {
-  const response = await fetchImpl(getGraphApiUrl(`${igUserId}/media_publish`), {
-    method: 'POST',
-    headers: {
-      Authorization: `Bearer ${accessToken}`,
-      'Content-Type': 'application/json; charset=UTF-8',
-    },
-    body: JSON.stringify({
-      creation_id: creationId,
-    }),
-  });
+  return executePlatformRequest(async () => {
+    const response = await fetchImpl(getGraphApiUrl(`${igUserId}/media_publish`), {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+        'Content-Type': 'application/json; charset=UTF-8',
+      },
+      body: JSON.stringify({
+        creation_id: creationId,
+      }),
+    });
 
-  return readMetaResponse(response);
+    return readMetaResponse(response);
+  }, {
+    audit: {
+      platform: 'instagram',
+      message: 'Publish Instagram Reel container',
+    },
+  });
 }
 
 async function fetchInstagramContainerStatus(fetchImpl, accessToken, containerId) {
   const url = new URL(getGraphApiUrl(containerId));
   url.searchParams.set('fields', 'status_code,status');
+  return executePlatformRequest(async () => {
+    const response = await fetchImpl(url.toString(), {
+      method: 'GET',
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+      },
+    });
 
-  const response = await fetchImpl(url.toString(), {
-    method: 'GET',
-    headers: {
-      Authorization: `Bearer ${accessToken}`,
+    return readMetaResponse(response);
+  }, {
+    audit: {
+      platform: 'instagram',
+      message: 'Fetch Instagram container status',
     },
   });
-
-  return readMetaResponse(response);
 }
 
 async function processInstagramReelPublishJob(options) {
@@ -367,28 +394,13 @@ async function processInstagramReelPublishJob(options) {
     return publishJob.serialized;
   }
 
-  if (!socialAccount || socialAccount.data.status !== 'active') {
+  if (!socialAccount || getEffectiveSocialAccountStatus(socialAccount.data) !== 'active') {
     const failed = await markPublishJobFailed(
       db,
       publishJob,
       createUiSafeError(
         'instagram_reconnect_required',
         'Your Instagram connection is no longer active. Reconnect Instagram and try again.',
-        false
-      ),
-      'publish_failed_precheck'
-    );
-    return failed?.serialized || null;
-  }
-
-  const accessToken = decryptSecret(socialAccount.data.accessToken);
-  if (!accessToken) {
-    const failed = await markPublishJobFailed(
-      db,
-      publishJob,
-      createUiSafeError(
-        'instagram_reconnect_required',
-        'Your Instagram connection is missing a usable access token. Reconnect Instagram and try again.',
         false
       ),
       'publish_failed_precheck'
@@ -424,6 +436,13 @@ async function processInstagramReelPublishJob(options) {
   };
 
   try {
+    const accessToken = await ensureUsableSocialAccessToken({
+      ...options,
+      db,
+      socialAccount,
+      platform: 'instagram',
+    });
+
     await updateSocialPublishJob(db, publishJobId, {
       status: 'processing',
       statusMessage: 'Preparing Instagram Reel publish…',
@@ -514,6 +533,10 @@ async function processInstagramReelPublishJob(options) {
       force: true,
     });
   } catch (error) {
+    if (error?.uiSafeError?.code === 'instagram_reconnect_required') {
+      const failed = await markPublishJobFailed(db, publishJob, error.uiSafeError, 'publish_failed_precheck');
+      return failed?.serialized || null;
+    }
     const uiSafeError = error.uiSafeError || mapLocalPublishError(error);
     const failed = await markPublishJobFailed(db, publishJob, {
       ...uiSafeError,
@@ -544,28 +567,13 @@ async function refreshInstagramPublishJobStatus(options) {
     return publishJob.serialized;
   }
 
-  if (!socialAccount || socialAccount.data.status !== 'active') {
+  if (!socialAccount || getEffectiveSocialAccountStatus(socialAccount.data) !== 'active') {
     const failed = await markPublishJobFailed(
       db,
       publishJob,
       createUiSafeError(
         'instagram_reconnect_required',
         'Your Instagram connection is no longer active. Reconnect Instagram and try again.',
-        false
-      ),
-      'status_refresh_failed'
-    );
-    return failed?.serialized || null;
-  }
-
-  const accessToken = decryptSecret(socialAccount.data.accessToken);
-  if (!accessToken) {
-    const failed = await markPublishJobFailed(
-      db,
-      publishJob,
-      createUiSafeError(
-        'instagram_reconnect_required',
-        'Your Instagram connection is missing a usable access token. Reconnect Instagram and try again.',
         false
       ),
       'status_refresh_failed'
@@ -589,6 +597,12 @@ async function refreshInstagramPublishJobStatus(options) {
   }
 
   try {
+    const accessToken = await ensureUsableSocialAccessToken({
+      ...options,
+      db,
+      socialAccount,
+      platform: 'instagram',
+    });
     const statusResult = await fetchInstagramContainerStatus(
       fetchImpl,
       accessToken,
@@ -686,6 +700,16 @@ async function refreshInstagramPublishJobStatus(options) {
     );
 
     if (uiSafeError.code === 'instagram_reconnect_required' || uiSafeError.retryable === false) {
+      if (uiSafeError.code === 'instagram_reconnect_required' && socialAccount) {
+        try {
+          await handlePlatformReconnectSignal({
+            db,
+            socialAccount,
+            platform: 'instagram',
+            message: uiSafeError.message,
+          });
+        } catch (_ignored) {}
+      }
       const failed = await markPublishJobFailed(
         db,
         publishJob,
@@ -744,6 +768,12 @@ async function syncInstagramPublishJob(options) {
 function scheduleInstagramPublishJob(options) {
   setImmediate(() => {
     syncInstagramPublishJob(options).catch((error) => {
+      logSocialAudit('publish_job_crashed', {
+        level: 'error',
+        platform: 'instagram',
+        publishJobId: options.publishJobId,
+        error,
+      });
       console.error('[InstagramPublishJob]', error.message);
     });
   });

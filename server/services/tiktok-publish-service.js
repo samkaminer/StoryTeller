@@ -5,12 +5,18 @@ const path = require('path');
 const { pipeline } = require('stream/promises');
 const fetch = require('node-fetch');
 const {
+  getEffectiveSocialAccountStatus,
   getOwnedSocialAccount,
   claimSocialPublishJobLease,
   getSocialPublishJob,
   updateSocialPublishJob,
 } = require('../utils/social-store');
-const { decryptSecret } = require('../utils/social-crypto');
+const { logSocialAudit } = require('../utils/social-audit');
+const { executePlatformRequest } = require('../utils/social-http');
+const {
+  ensureUsableSocialAccessToken,
+  handlePlatformReconnectSignal,
+} = require('./social-token-service');
 
 const TIKTOK_UPLOAD_INIT_URL = 'https://open.tiktokapis.com/v2/post/publish/inbox/video/init/';
 const TIKTOK_STATUS_FETCH_URL = 'https://open.tiktokapis.com/v2/post/publish/status/fetch/';
@@ -215,6 +221,7 @@ async function readTikTokResponse(response) {
     const err = new Error(uiSafeError.message);
     err.httpStatus = response.status;
     err.platformCode = errorCode || null;
+    err.retryAfter = response.headers?.get?.('retry-after') || null;
     err.uiSafeError = uiSafeError;
     err.responseBody = body;
     throw err;
@@ -318,23 +325,30 @@ async function downloadFileFromGcs(storage, defaultBucketName, gcsUrl) {
 }
 
 async function initializeTikTokUpload(fetchImpl, accessToken, uploadInfo) {
-  const response = await fetchImpl(TIKTOK_UPLOAD_INIT_URL, {
-    method: 'POST',
-    headers: {
-      Authorization: `Bearer ${accessToken}`,
-      'Content-Type': 'application/json; charset=UTF-8',
-    },
-    body: JSON.stringify({
-      source_info: {
-        source: 'FILE_UPLOAD',
-        video_size: uploadInfo.videoSize,
-        chunk_size: uploadInfo.chunkSize,
-        total_chunk_count: uploadInfo.totalChunkCount,
+  const body = await executePlatformRequest(async () => {
+    const response = await fetchImpl(TIKTOK_UPLOAD_INIT_URL, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+        'Content-Type': 'application/json; charset=UTF-8',
       },
-    }),
-  });
+      body: JSON.stringify({
+        source_info: {
+          source: 'FILE_UPLOAD',
+          video_size: uploadInfo.videoSize,
+          chunk_size: uploadInfo.chunkSize,
+          total_chunk_count: uploadInfo.totalChunkCount,
+        },
+      }),
+    });
 
-  const body = await readTikTokResponse(response);
+    return readTikTokResponse(response);
+  }, {
+    audit: {
+      platform: 'tiktok',
+      message: 'Initialize TikTok upload',
+    },
+  });
   return {
     publishId: body?.data?.publish_id || null,
     uploadUrl: body?.data?.upload_url || null,
@@ -358,27 +372,36 @@ async function uploadFileToTikTok(fetchImpl, uploadUrl, localPath, mimeType, tot
       const requestBody = bytesRead === chunkLength ? buffer : buffer.subarray(0, bytesRead);
       const end = start + bytesRead - 1;
 
-      const response = await fetchImpl(uploadUrl, {
-        method: 'PUT',
-        headers: {
-          'Content-Type': mimeType,
-          'Content-Length': String(bytesRead),
-          'Content-Range': `bytes ${start}-${end}/${totalBytes}`,
-        },
-        body: requestBody,
-      });
+      await executePlatformRequest(async () => {
+        const response = await fetchImpl(uploadUrl, {
+          method: 'PUT',
+          headers: {
+            'Content-Type': mimeType,
+            'Content-Length': String(bytesRead),
+            'Content-Range': `bytes ${start}-${end}/${totalBytes}`,
+          },
+          body: requestBody,
+        });
 
-      if (![201, 206].includes(response.status)) {
-        const errorText = await response.text().catch(() => '');
-        const err = new Error('TikTok did not accept the uploaded video chunk');
-        err.httpStatus = response.status;
-        err.platformCode = 'upload_chunk_failed';
-        err.uiSafeError = mapTikTokApiError(
-          'internal_error',
-          errorText || 'TikTok rejected the uploaded video chunk.'
-        );
-        throw err;
-      }
+        if (![201, 206].includes(response.status)) {
+          const errorText = await response.text().catch(() => '');
+          const err = new Error('TikTok did not accept the uploaded video chunk');
+          err.httpStatus = response.status;
+          err.platformCode = 'upload_chunk_failed';
+          err.retryAfter = response.headers?.get?.('retry-after') || null;
+          err.uiSafeError = mapTikTokApiError(
+            response.status === 429 ? 'rate_limit_exceeded' : 'internal_error',
+            errorText || 'TikTok rejected the uploaded video chunk.'
+          );
+          throw err;
+        }
+      }, {
+        audit: {
+          platform: 'tiktok',
+          message: 'Upload TikTok video chunk',
+          attempt: chunkIndex + 1,
+        },
+      });
     }
   } finally {
     await handle.close().catch(() => {});
@@ -386,16 +409,23 @@ async function uploadFileToTikTok(fetchImpl, uploadUrl, localPath, mimeType, tot
 }
 
 async function fetchTikTokPublishStatus(fetchImpl, accessToken, publishId) {
-  const response = await fetchImpl(TIKTOK_STATUS_FETCH_URL, {
-    method: 'POST',
-    headers: {
-      Authorization: `Bearer ${accessToken}`,
-      'Content-Type': 'application/json; charset=UTF-8',
-    },
-    body: JSON.stringify({ publish_id: publishId }),
-  });
+  const body = await executePlatformRequest(async () => {
+    const response = await fetchImpl(TIKTOK_STATUS_FETCH_URL, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+        'Content-Type': 'application/json; charset=UTF-8',
+      },
+      body: JSON.stringify({ publish_id: publishId }),
+    });
 
-  const body = await readTikTokResponse(response);
+    return readTikTokResponse(response);
+  }, {
+    audit: {
+      platform: 'tiktok',
+      message: 'Fetch TikTok publish status',
+    },
+  });
   return body?.data || {};
 }
 
@@ -456,28 +486,13 @@ async function processTikTokDraftPublishJob(options) {
     return publishJob.serialized;
   }
 
-  if (!socialAccount || socialAccount.data.status !== 'active') {
+  if (!socialAccount || getEffectiveSocialAccountStatus(socialAccount.data) !== 'active') {
     const failed = await markPublishJobFailed(
       db,
       publishJob,
       createUiSafeError(
         'tiktok_reconnect_required',
         'Your TikTok connection is no longer active. Reconnect TikTok and try again.',
-        false
-      ),
-      'publish_failed_precheck'
-    );
-    return failed?.serialized || null;
-  }
-
-  const accessToken = decryptSecret(socialAccount.data.accessToken);
-  if (!accessToken) {
-    const failed = await markPublishJobFailed(
-      db,
-      publishJob,
-      createUiSafeError(
-        'tiktok_reconnect_required',
-        'Your TikTok connection is missing a usable access token. Reconnect TikTok and try again.',
         false
       ),
       'publish_failed_precheck'
@@ -500,6 +515,13 @@ async function processTikTokDraftPublishJob(options) {
   let downloadResult = null;
 
   try {
+    const accessToken = await ensureUsableSocialAccessToken({
+      ...options,
+      db,
+      socialAccount,
+      platform: 'tiktok',
+    });
+
     await updateSocialPublishJob(db, publishJobId, {
       status: 'processing',
       statusMessage: 'Preparing TikTok draft upload…',
@@ -583,6 +605,10 @@ async function processTikTokDraftPublishJob(options) {
       force: true,
     });
   } catch (error) {
+    if (error?.uiSafeError?.code === 'tiktok_reconnect_required') {
+      const failed = await markPublishJobFailed(db, publishJob, error.uiSafeError, 'publish_failed_precheck');
+      return failed?.serialized || null;
+    }
     const uiSafeError = error.uiSafeError || mapLocalPublishError(error);
 
     const failed = await markPublishJobFailed(db, publishJob, {
@@ -618,7 +644,7 @@ async function refreshTikTokPublishJobStatus(options) {
     return publishJob.serialized;
   }
 
-  if (!socialAccount || socialAccount.data.status !== 'active') {
+  if (!socialAccount || getEffectiveSocialAccountStatus(socialAccount.data) !== 'active') {
     const failed = await markPublishJobFailed(
       db,
       publishJob,
@@ -632,22 +658,13 @@ async function refreshTikTokPublishJobStatus(options) {
     return failed?.serialized || null;
   }
 
-  const accessToken = decryptSecret(socialAccount.data.accessToken);
-  if (!accessToken) {
-    const failed = await markPublishJobFailed(
-      db,
-      publishJob,
-      createUiSafeError(
-        'tiktok_reconnect_required',
-        'Your TikTok connection is missing a usable access token. Reconnect TikTok and try again.',
-        false
-      ),
-      'status_refresh_failed'
-    );
-    return failed?.serialized || null;
-  }
-
   try {
+    const accessToken = await ensureUsableSocialAccessToken({
+      ...options,
+      db,
+      socialAccount,
+      platform: 'tiktok',
+    });
     const statusResult = await fetchTikTokPublishStatus(fetchImpl, accessToken, publishJob.data.platformPublishId);
     const platformStatus = statusResult.status || null;
     const patch = {
@@ -717,7 +734,19 @@ async function refreshTikTokPublishJobStatus(options) {
       true
     );
 
-    if (uiSafeError.code === 'tiktok_reconnect_required') {
+    if (uiSafeError.code === 'tiktok_reconnect_required' || uiSafeError.retryable === false) {
+      if (socialAccount) {
+        if (uiSafeError.code === 'tiktok_reconnect_required') {
+          try {
+            await handlePlatformReconnectSignal({
+              db,
+              socialAccount,
+              platform: 'tiktok',
+              message: uiSafeError.message,
+            });
+          } catch (_ignored) {}
+        }
+      }
       const failed = await markPublishJobFailed(
         db,
         publishJob,
@@ -776,6 +805,12 @@ async function syncTikTokPublishJob(options) {
 function scheduleTikTokPublishJob(options) {
   setImmediate(() => {
     syncTikTokPublishJob(options).catch((error) => {
+      logSocialAudit('publish_job_crashed', {
+        level: 'error',
+        platform: 'tiktok',
+        publishJobId: options.publishJobId,
+        error,
+      });
       console.error('[TikTokPublishJob]', error.message);
     });
   });

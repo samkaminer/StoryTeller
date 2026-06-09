@@ -1,28 +1,43 @@
 const express = require('express');
 const admin = require('firebase-admin');
 const fetch = require('node-fetch');
+const { v4: uuidv4 } = require('uuid');
 const { requireAuth } = require('../middleware/auth');
 const rateLimiters = require('../middleware/rateLimiter');
 const {
+  SOCIAL_PUBLISH_EVENT_SUBCOLLECTION,
+  canRetryPublishJobData,
+  buildSocialPublishJobRecord,
+  createSocialPublishJob,
   disconnectOwnedSocialAccount,
+  findLatestOwnedPublishJobForTarget,
+  getEffectiveSocialAccountStatus,
+  getOwnedSocialAccount,
   getOwnedPublishJob,
+  isPublishJobFinalStatus,
   listSocialAccounts,
-  normalizeScopes,
+  serializePublishJobData,
+  updateSocialPublishJob,
   upsertConnectedSocialAccount,
 } = require('../utils/social-store');
 const { createSocialAuthState, consumeSocialAuthState } = require('../utils/social-auth-state');
-const { assertSocialTokenEncryptionConfig } = require('../utils/social-crypto');
-const { syncSocialPublishJob } = require('../services/social-publish-runner');
+const { logSocialAudit } = require('../utils/social-audit');
+const { executePlatformRequest } = require('../utils/social-http');
+const {
+  addSecondsToNow,
+  getMetaConfig,
+  getTikTokConfig,
+  splitScopes,
+} = require('../utils/social-provider-config');
+const { scheduleSocialPublishJob, syncSocialPublishJob } = require('../services/social-publish-runner');
 
 const TIKTOK_AUTHORIZE_URL = 'https://www.tiktok.com/v2/auth/authorize/';
 const TIKTOK_TOKEN_URL = 'https://open.tiktokapis.com/v2/oauth/token/';
 const TIKTOK_USER_INFO_URL = 'https://open.tiktokapis.com/v2/user/info/';
-
-function splitScopes(value, fallback) {
-  if (Array.isArray(value)) return normalizeScopes(value);
-  if (typeof value !== 'string' || !value.trim()) return normalizeScopes(fallback);
-  return normalizeScopes(value.split(/[,\s]+/));
-}
+const REQUIRED_PUBLISH_SCOPES = {
+  tiktok: ['video.upload'],
+  instagram: ['instagram_basic', 'instagram_content_publish'],
+};
 
 function getDb(options) {
   return options.db || admin.firestore();
@@ -37,69 +52,10 @@ function getAbsoluteBaseUrl(req) {
   return `${req.protocol}://${req.get('host')}`;
 }
 
-function addSecondsToNow(seconds) {
-  return Number.isFinite(seconds) && seconds > 0
-    ? new Date(Date.now() + (seconds * 1000))
-    : null;
-}
-
-function getMissingEnvVars(envVars) {
-  return envVars.filter((name) => !process.env[name]);
-}
-
-function getTikTokConfig() {
-  const missingEnvVars = getMissingEnvVars([
-    'TIKTOK_CLIENT_KEY',
-    'TIKTOK_CLIENT_SECRET',
-    'TIKTOK_REDIRECT_URI',
-    'SOCIAL_TOKEN_ENCRYPTION_KEY_BASE64',
-  ]);
-  if (missingEnvVars.length) {
-    const error = new Error('TikTok OAuth is not configured');
-    error.missingEnvVars = missingEnvVars;
-    throw error;
-  }
-
-  assertSocialTokenEncryptionConfig();
-
-  return {
-    clientKey: process.env.TIKTOK_CLIENT_KEY,
-    clientSecret: process.env.TIKTOK_CLIENT_SECRET,
-    redirectUri: process.env.TIKTOK_REDIRECT_URI,
-    scopes: splitScopes(process.env.TIKTOK_CONNECT_SCOPES, [
-      'user.info.basic',
-      'video.upload',
-    ]),
-  };
-}
-
-function getMetaConfig() {
-  const missingEnvVars = getMissingEnvVars([
-    'META_APP_ID',
-    'META_APP_SECRET',
-    'META_REDIRECT_URI',
-    'SOCIAL_TOKEN_ENCRYPTION_KEY_BASE64',
-  ]);
-  if (missingEnvVars.length) {
-    const error = new Error('Meta OAuth is not configured');
-    error.missingEnvVars = missingEnvVars;
-    throw error;
-  }
-
-  assertSocialTokenEncryptionConfig();
-
-  return {
-    appId: process.env.META_APP_ID,
-    appSecret: process.env.META_APP_SECRET,
-    redirectUri: process.env.META_REDIRECT_URI,
-    graphVersion: process.env.META_GRAPH_API_VERSION || 'v23.0',
-    scopes: splitScopes(process.env.META_CONNECT_SCOPES, [
-      'instagram_basic',
-      'instagram_content_publish',
-      'pages_read_engagement',
-      'pages_show_list',
-    ]),
-  };
+function getMissingPublishScopes(platform, scopes = []) {
+  const grantedScopes = Array.isArray(scopes) ? scopes : [];
+  const requiredScopes = REQUIRED_PUBLISH_SCOPES[platform] || [];
+  return requiredScopes.filter((scope) => !grantedScopes.includes(scope));
 }
 
 function buildTikTokAuthorizeUrl(config, stateRecord) {
@@ -139,6 +95,8 @@ async function fetchJsonResponse(response) {
       `Provider request failed with status ${response.status}`
     );
     error.status = response.status;
+    error.httpStatus = response.status;
+    error.retryAfter = response.headers?.get?.('retry-after') || null;
     error.providerBody = body;
     throw error;
   }
@@ -155,77 +113,119 @@ function getTikTokRequestedFields(scopes) {
 }
 
 async function exchangeTikTokCode(fetchImpl, config, code) {
-  const params = new URLSearchParams();
-  params.set('client_key', config.clientKey);
-  params.set('client_secret', config.clientSecret);
-  params.set('code', code);
-  params.set('grant_type', 'authorization_code');
-  params.set('redirect_uri', config.redirectUri);
+  return executePlatformRequest(async () => {
+    const params = new URLSearchParams();
+    params.set('client_key', config.clientKey);
+    params.set('client_secret', config.clientSecret);
+    params.set('code', code);
+    params.set('grant_type', 'authorization_code');
+    params.set('redirect_uri', config.redirectUri);
 
-  const response = await fetchImpl(TIKTOK_TOKEN_URL, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/x-www-form-urlencoded',
+    const response = await fetchImpl(TIKTOK_TOKEN_URL, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/x-www-form-urlencoded',
+      },
+      body: params.toString(),
+    });
+
+    return fetchJsonResponse(response);
+  }, {
+    audit: {
+      platform: 'tiktok',
+      message: 'Exchange TikTok OAuth code',
     },
-    body: params.toString(),
   });
-
-  return fetchJsonResponse(response);
 }
 
 async function fetchTikTokUser(fetchImpl, accessToken, scopes) {
   const fields = getTikTokRequestedFields(scopes).join(',');
   const url = `${TIKTOK_USER_INFO_URL}?fields=${encodeURIComponent(fields)}`;
-  const response = await fetchImpl(url, {
-    headers: {
-      Authorization: `Bearer ${accessToken}`,
+  return executePlatformRequest(async () => {
+    const response = await fetchImpl(url, {
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+      },
+    });
+    const body = await fetchJsonResponse(response);
+    return body?.data?.user || {};
+  }, {
+    audit: {
+      platform: 'tiktok',
+      message: 'Fetch TikTok user profile',
     },
   });
-  const body = await fetchJsonResponse(response);
-  return body?.data?.user || {};
 }
 
 async function exchangeMetaCode(fetchImpl, config, code) {
-  const url = new URL(`https://graph.facebook.com/${config.graphVersion}/oauth/access_token`);
-  url.searchParams.set('client_id', config.appId);
-  url.searchParams.set('client_secret', config.appSecret);
-  url.searchParams.set('redirect_uri', config.redirectUri);
-  url.searchParams.set('code', code);
+  return executePlatformRequest(async () => {
+    const url = new URL(`https://graph.facebook.com/${config.graphVersion}/oauth/access_token`);
+    url.searchParams.set('client_id', config.appId);
+    url.searchParams.set('client_secret', config.appSecret);
+    url.searchParams.set('redirect_uri', config.redirectUri);
+    url.searchParams.set('code', code);
 
-  const response = await fetchImpl(url.toString());
-  return fetchJsonResponse(response);
+    const response = await fetchImpl(url.toString());
+    return fetchJsonResponse(response);
+  }, {
+    audit: {
+      platform: 'instagram',
+      message: 'Exchange Meta OAuth code',
+    },
+  });
 }
 
 async function exchangeMetaLongLivedToken(fetchImpl, config, accessToken) {
-  const url = new URL(`https://graph.facebook.com/${config.graphVersion}/oauth/access_token`);
-  url.searchParams.set('grant_type', 'fb_exchange_token');
-  url.searchParams.set('client_id', config.appId);
-  url.searchParams.set('client_secret', config.appSecret);
-  url.searchParams.set('fb_exchange_token', accessToken);
+  return executePlatformRequest(async () => {
+    const url = new URL(`https://graph.facebook.com/${config.graphVersion}/oauth/access_token`);
+    url.searchParams.set('grant_type', 'fb_exchange_token');
+    url.searchParams.set('client_id', config.appId);
+    url.searchParams.set('client_secret', config.appSecret);
+    url.searchParams.set('fb_exchange_token', accessToken);
 
-  const response = await fetchImpl(url.toString());
-  return fetchJsonResponse(response);
+    const response = await fetchImpl(url.toString());
+    return fetchJsonResponse(response);
+  }, {
+    audit: {
+      platform: 'instagram',
+      message: 'Exchange Meta long-lived token',
+    },
+  });
 }
 
 async function fetchMetaUser(fetchImpl, config, accessToken) {
-  const url = new URL(`https://graph.facebook.com/${config.graphVersion}/me`);
-  url.searchParams.set('fields', 'id,name');
-  url.searchParams.set('access_token', accessToken);
+  return executePlatformRequest(async () => {
+    const url = new URL(`https://graph.facebook.com/${config.graphVersion}/me`);
+    url.searchParams.set('fields', 'id,name');
+    url.searchParams.set('access_token', accessToken);
 
-  const response = await fetchImpl(url.toString());
-  return fetchJsonResponse(response);
+    const response = await fetchImpl(url.toString());
+    return fetchJsonResponse(response);
+  }, {
+    audit: {
+      platform: 'instagram',
+      message: 'Fetch Meta user profile',
+    },
+  });
 }
 
 async function fetchMetaInstagramAccount(fetchImpl, config, accessToken) {
-  const url = new URL(`https://graph.facebook.com/${config.graphVersion}/me/accounts`);
-  url.searchParams.set(
-    'fields',
-    'id,name,instagram_business_account{id,username,name,profile_picture_url},connected_instagram_account{id,username,name,profile_picture_url}'
-  );
-  url.searchParams.set('access_token', accessToken);
+  const body = await executePlatformRequest(async () => {
+    const url = new URL(`https://graph.facebook.com/${config.graphVersion}/me/accounts`);
+    url.searchParams.set(
+      'fields',
+      'id,name,instagram_business_account{id,username,name,profile_picture_url},connected_instagram_account{id,username,name,profile_picture_url}'
+    );
+    url.searchParams.set('access_token', accessToken);
 
-  const response = await fetchImpl(url.toString());
-  const body = await fetchJsonResponse(response);
+    const response = await fetchImpl(url.toString());
+    return fetchJsonResponse(response);
+  }, {
+    audit: {
+      platform: 'instagram',
+      message: 'Fetch Meta Page and Instagram account mapping',
+    },
+  });
   const page = (body?.data || []).find((candidate) => (
     candidate?.instagram_business_account?.id ||
     candidate?.connected_instagram_account?.id
@@ -309,14 +309,10 @@ function getPlatformSetupStatus(platform) {
 
     return {
       configured: true,
-      missingEnvVars: [],
-      setupError: null,
     };
-  } catch (error) {
+  } catch (_error) {
     return {
       configured: false,
-      missingEnvVars: Array.isArray(error?.missingEnvVars) ? error.missingEnvVars : [],
-      setupError: error?.message || 'Provider configuration is invalid',
     };
   }
 }
@@ -333,9 +329,9 @@ function handleProviderConfigError(res, error) {
     return false;
   }
 
-  res.status(500).json({
-    error: error.message,
-    missingEnvVars: error.missingEnvVars || [],
+  const providerLabel = String(error?.message || '').includes('TikTok') ? 'TikTok' : 'Instagram';
+  res.status(503).json({
+    error: `${providerLabel} connection is not available right now.`,
   });
   return true;
 }
@@ -358,6 +354,12 @@ async function handleTikTokCallback(req, res, options) {
   }
 
   const stateRecord = await consumeSocialAuthState(db, state, 'tiktok');
+  logSocialAudit('oauth_callback_received', {
+    platform: 'tiktok',
+    userId: stateRecord.data.userId,
+    storyId: stateRecord.data.storyId,
+    takeReportId: stateRecord.data.takeReportId,
+  });
   const tokenResponse = await exchangeTikTokCode(fetchImpl, config, code);
   const grantedScopes = splitScopes(tokenResponse.scope, stateRecord.data.requestedScopes);
   const profile = await fetchTikTokUser(fetchImpl, tokenResponse.access_token, grantedScopes);
@@ -411,6 +413,12 @@ async function handleInstagramCallback(req, res, options) {
   }
 
   const stateRecord = await consumeSocialAuthState(db, state, 'instagram');
+  logSocialAudit('oauth_callback_received', {
+    platform: 'instagram',
+    userId: stateRecord.data.userId,
+    storyId: stateRecord.data.storyId,
+    takeReportId: stateRecord.data.takeReportId,
+  });
   const shortLivedToken = await exchangeMetaCode(fetchImpl, config, code);
   const longLivedToken = await exchangeMetaLongLivedToken(fetchImpl, config, shortLivedToken.access_token);
   const accessToken = longLivedToken.access_token || shortLivedToken.access_token;
@@ -452,9 +460,19 @@ async function handleInstagramCallback(req, res, options) {
   }));
 }
 
+function buildPublishTargetFilters(publishJobData = {}) {
+  return {
+    storyId: publishJobData.storyId || null,
+    takeReportId: publishJobData.takeReportId || null,
+    platform: publishJobData.platform || null,
+    publishMode: publishJobData.publishMode || null,
+  };
+}
+
 function createRouter(options = {}) {
   const router = express.Router();
   const publishJobStatusSync = options.publishJobStatusSync || syncSocialPublishJob;
+  const publishJobScheduler = options.publishJobScheduler || scheduleSocialPublishJob;
 
   router.get('/accounts', requireAuth, async (req, res) => {
     try {
@@ -567,7 +585,183 @@ function createRouter(options = {}) {
     }
   });
 
-  router.get('/publishes/:publishJobId', requireAuth, async (req, res) => {
+  router.post('/publishes/:publishJobId/retry', rateLimiters.socialPublishAction, requireAuth, async (req, res) => {
+    try {
+      const db = getDb(options);
+      const originalJob = await getOwnedPublishJob(db, req.user.uid, req.params.publishJobId);
+      if (!originalJob) {
+        return res.status(404).json({ error: 'Publish job not found' });
+      }
+
+      const latestTargetJob = await findLatestOwnedPublishJobForTarget(
+        db,
+        req.user.uid,
+        buildPublishTargetFilters(originalJob.data)
+      );
+
+      if (latestTargetJob && latestTargetJob.doc.id !== originalJob.doc.id) {
+        const latestIsFinal = isPublishJobFinalStatus(latestTargetJob.data.status);
+        return res.status(409).json({
+          error: latestIsFinal
+            ? 'A newer publish attempt already exists for this take and platform'
+            : 'A newer publish attempt is already in progress for this take and platform',
+          publishJob: latestTargetJob.serialized,
+        });
+      }
+
+      if (!canRetryPublishJobData(originalJob.data)) {
+        return res.status(409).json({
+          error: originalJob.data.lastError?.retryable === false
+            ? 'This publish failure cannot be retried safely'
+            : 'Only failed publish jobs can be retried',
+          publishJob: originalJob.serialized,
+        });
+      }
+
+      const account = await getOwnedSocialAccount(db, req.user.uid, originalJob.data.socialAccountId);
+      if (!account || account.data.platform !== originalJob.data.platform) {
+        return res.status(409).json({ error: 'Reconnect this account before retrying the publish' });
+      }
+      if (getEffectiveSocialAccountStatus(account.data) !== 'active') {
+        return res.status(409).json({ error: 'Reconnect this account before retrying the publish' });
+      }
+      const missingScopes = getMissingPublishScopes(originalJob.data.platform, account.data.scopes);
+      if (missingScopes.length > 0) {
+        return res.status(409).json({
+          error: 'Reconnect this account to restore required publishing permissions',
+          missingScopes,
+        });
+      }
+
+      const retryPayload = {
+        storyId: originalJob.data.storyId,
+        takeReportId: originalJob.data.takeReportId,
+        takeResponseDocId: originalJob.data.takeResponseDocId || null,
+        socialAccountId: originalJob.data.socialAccountId,
+        platform: originalJob.data.platform,
+        publishMode: originalJob.data.publishMode,
+        caption: originalJob.data.caption || '',
+        platformOptions: originalJob.data.platformOptions || {},
+        mediaSnapshot: originalJob.data.mediaSnapshot || {},
+        retryOfPublishJobId: originalJob.doc.id,
+        statusMessage: 'Queued for retry',
+      };
+      let retryJob = null;
+
+      if (typeof db.runTransaction === 'function') {
+        const originalJobRef = db.collection('socialPublishJobs').doc(originalJob.doc.id);
+        const { publishJobId, publishJobDoc, createdEvent } = buildSocialPublishJobRecord(req.user.uid, retryPayload);
+        const retryJobRef = db.collection('socialPublishJobs').doc(publishJobId);
+        const now = new Date();
+
+        await db.runTransaction(async (transaction) => {
+          const originalSnapshot = await transaction.get(originalJobRef);
+          if (!originalSnapshot.exists) {
+            const error = new Error('Publish job not found');
+            error.status = 404;
+            throw error;
+          }
+
+          const freshOriginalData = originalSnapshot.data() || {};
+          if (freshOriginalData.userId !== req.user.uid) {
+            const error = new Error('Publish job not found');
+            error.status = 404;
+            throw error;
+          }
+          if (!canRetryPublishJobData(freshOriginalData)) {
+            const error = new Error(freshOriginalData.supersededByPublishJobId
+              ? 'A newer publish attempt already exists for this take and platform'
+              : (freshOriginalData.lastError?.retryable === false
+                ? 'This publish failure cannot be retried safely'
+                : 'Only failed publish jobs can be retried'));
+            error.status = 409;
+            throw error;
+          }
+
+          transaction.set(retryJobRef, publishJobDoc);
+          transaction.set(
+            retryJobRef.collection(SOCIAL_PUBLISH_EVENT_SUBCOLLECTION).doc(uuidv4()),
+            {
+              ...createdEvent,
+              createdAt: admin.firestore.FieldValue.serverTimestamp(),
+            }
+          );
+          transaction.update(originalJobRef, {
+            supersededByPublishJobId: publishJobId,
+            updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+          });
+          transaction.set(
+            originalJobRef.collection(SOCIAL_PUBLISH_EVENT_SUBCOLLECTION).doc(uuidv4()),
+            {
+              type: 'job_retry_queued',
+              status: freshOriginalData.status || 'failed',
+              message: `Retry queued as ${publishJobId}`,
+              platformCode: freshOriginalData.platformStatus || null,
+              httpStatus: 0,
+              attempt: freshOriginalData.attemptCount || 0,
+              payloadRedacted: {
+                retryPublishJobId: publishJobId,
+              },
+              createdAt: admin.firestore.FieldValue.serverTimestamp(),
+            }
+          );
+        });
+
+        retryJob = serializePublishJobData({
+          ...publishJobDoc,
+          queuedAt: now,
+          createdAt: now,
+          updatedAt: now,
+        }, publishJobId);
+      } else {
+        retryJob = await createSocialPublishJob(db, req.user.uid, retryPayload);
+        await updateSocialPublishJob(db, originalJob.doc.id, {
+          supersededByPublishJobId: retryJob.publishJobId,
+        }, {
+          type: 'job_retry_queued',
+          status: originalJob.data.status || 'failed',
+          message: `Retry queued as ${retryJob.publishJobId}`,
+          platformCode: originalJob.data.platformStatus || null,
+          httpStatus: 0,
+          attempt: originalJob.data.attemptCount || 0,
+          payloadRedacted: {
+            retryPublishJobId: retryJob.publishJobId,
+          },
+        });
+      }
+
+      res.status(202).json({
+        ok: true,
+        reusedExisting: false,
+        publishJob: retryJob,
+      });
+
+      logSocialAudit('publish_retry_queued', {
+        platform: retryJob.platform,
+        userId: req.user.uid,
+        socialAccountId: retryJob.socialAccountId,
+        publishJobId: retryJob.publishJobId,
+        retryOfPublishJobId: originalJob.doc.id,
+        storyId: retryJob.storyId,
+        takeReportId: retryJob.takeReportId,
+        message: 'Queued retry publish job',
+      });
+
+      if (typeof publishJobScheduler === 'function') {
+        publishJobScheduler({
+          db,
+          storage: options.storage || null,
+          defaultBucketName: options.bucketName || null,
+          publishJobId: retryJob.publishJobId,
+        });
+      }
+    } catch (err) {
+      console.error('[social POST /publishes/:publishJobId/retry]', err.message);
+      res.status(err.status || 500).json({ error: err.status ? err.message : 'Failed to retry publish job' });
+    }
+  });
+
+  router.get('/publishes/:publishJobId', rateLimiters.socialPublishStatus, requireAuth, async (req, res) => {
     try {
       const db = getDb(options);
       let publishJob = await getOwnedPublishJob(db, req.user.uid, req.params.publishJobId);

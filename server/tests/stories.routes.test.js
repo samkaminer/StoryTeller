@@ -20,6 +20,21 @@ function makeSnapshot(docs) {
 
 function createPublishTestDb({ storyId, storyData, reportDocs, socialAccountData }) {
   const publishJobWrites = [];
+  const normalizedSocialAccountData = socialAccountData
+      ? {
+        ...socialAccountData,
+        scopes: socialAccountData.scopes || (
+          socialAccountData.platform === 'instagram'
+            ? ['instagram_basic', 'instagram_content_publish']
+            : ['video.upload']
+        ),
+        accessToken: socialAccountData.accessToken || (
+          socialAccountData.status === 'active'
+            ? { ciphertext: 'test-access-token' }
+            : socialAccountData.accessToken
+        ),
+      }
+    : socialAccountData;
 
   const db = admin.firestore();
   db.collection.mockImplementation((collectionName) => {
@@ -68,7 +83,7 @@ function createPublishTestDb({ storyId, storyData, reportDocs, socialAccountData
           get: jest.fn().mockResolvedValue({
             id: docId,
             exists: true,
-            data: () => socialAccountData,
+            data: () => normalizedSocialAccountData,
           }),
         })),
       };
@@ -182,6 +197,45 @@ describe('stories routes', () => {
       ]),
     };
 
+    const publishJobDocs = [
+      {
+        id: 'publish-instagram-1',
+        data: () => ({
+          userId: 'user-123',
+          storyId,
+          takeReportId: latestReportId,
+          platform: 'instagram',
+          publishMode: 'instagram_reel',
+          status: 'completed',
+          statusMessage: 'Instagram Reel published.',
+          lastError: null,
+          createdAt: makeTimestamp('2026-06-03T14:10:00.000Z'),
+          updatedAt: makeTimestamp('2026-06-03T14:12:00.000Z'),
+          completedAt: makeTimestamp('2026-06-03T14:12:00.000Z'),
+        }),
+      },
+      {
+        id: 'publish-tiktok-1',
+        data: () => ({
+          userId: 'user-123',
+          storyId,
+          takeReportId: earlierReportId,
+          platform: 'tiktok',
+          publishMode: 'tiktok_draft',
+          status: 'failed',
+          statusMessage: 'TikTok rejected the video duration.',
+          lastError: {
+            code: 'tiktok_invalid_duration',
+            message: 'TikTok rejected the video duration.',
+            retryable: false,
+          },
+          createdAt: makeTimestamp('2026-06-02T14:10:00.000Z'),
+          updatedAt: makeTimestamp('2026-06-02T14:11:00.000Z'),
+          completedAt: makeTimestamp('2026-06-02T14:11:00.000Z'),
+        }),
+      },
+    ];
+
     db.collection.mockImplementation((collectionName) => {
       if (collectionName === 'stories') {
         return {
@@ -214,6 +268,27 @@ describe('stories routes', () => {
               };
             }),
           })),
+        };
+      }
+
+      if (collectionName === 'socialPublishJobs') {
+        return {
+          where: jest.fn((field, operator, value) => {
+            if (field !== 'userId' || operator !== '==' || value !== 'user-123') {
+              throw new Error(`Unexpected socialPublishJobs query: ${field} ${operator} ${value}`);
+            }
+            return {
+              where: jest.fn((innerField, innerOperator, innerValue) => {
+                if (innerField !== 'storyId' || innerOperator !== '==' || innerValue !== storyId) {
+                  throw new Error(`Unexpected nested socialPublishJobs query: ${innerField} ${innerOperator} ${innerValue}`);
+                }
+                return {
+                  get: jest.fn().mockResolvedValue(makeSnapshot(publishJobDocs)),
+                };
+              }),
+              get: jest.fn().mockResolvedValue(makeSnapshot(publishJobDocs)),
+            };
+          }),
         };
       }
 
@@ -256,6 +331,34 @@ describe('stories routes', () => {
       takeMediaStatus: 'ready',
       isLatest: true,
     });
+    expect(response.body.takes[0].publishHistory).toEqual([
+      expect.objectContaining({
+        publishJobId: 'publish-instagram-1',
+        platform: 'instagram',
+        status: 'completed',
+        activityAt: '2026-06-03T14:12:00.000Z',
+        failureReason: null,
+      }),
+    ]);
+    expect(response.body.takes[1].publishHistory).toEqual([
+      expect.objectContaining({
+        publishJobId: 'publish-tiktok-1',
+        platform: 'tiktok',
+        status: 'failed',
+        failureReason: 'TikTok rejected the video duration.',
+        canRetry: false,
+      }),
+    ]);
+    expect(response.body.publishJobs).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        publishJobId: 'publish-instagram-1',
+        platform: 'instagram',
+      }),
+      expect.objectContaining({
+        publishJobId: 'publish-tiktok-1',
+        platform: 'tiktok',
+      }),
+    ]));
     expect(response.body.takes[0].videoSignedUrl).toContain(encodeURIComponent('story_videos/take-2.mp4'));
     expect(response.body.takes[0].media).toMatchObject({
       ready: true,
@@ -274,6 +377,122 @@ describe('stories routes', () => {
     });
     expect(response.body.takes[1].videoSignedUrl).toContain(encodeURIComponent('story_videos/take-1.mp4'));
     expect(storyUpdate).not.toHaveBeenCalled();
+  });
+
+  it('returns archive publish summaries from the latest publish state per platform', async () => {
+    const db = admin.firestore();
+    const storyId = 'story-archive-1';
+
+    db.collection.mockImplementation((collectionName) => {
+      if (collectionName === 'stories') {
+        return {
+          where: jest.fn((field, operator, value) => {
+            if (field !== 'userId' || operator !== '==' || value !== 'user-123') {
+              throw new Error(`Unexpected stories query: ${field} ${operator} ${value}`);
+            }
+            return {
+              limit: jest.fn(() => ({
+                get: jest.fn().mockResolvedValue(makeSnapshot([
+                  {
+                    id: storyId,
+                    data: () => ({
+                      userId: 'user-123',
+                      promptText: 'Archive summary story',
+                      status: 'final_recorded',
+                      createdAt: makeTimestamp('2026-06-05T10:00:00.000Z'),
+                      thumbnail_gcs: 'gs://test-bucket/story_thumbnails/archive-1.jpg',
+                    }),
+                  },
+                ])),
+              })),
+            };
+          }),
+        };
+      }
+
+      if (collectionName === 'socialPublishJobs') {
+        return {
+          where: jest.fn((field, operator, value) => {
+            if (field !== 'userId' || operator !== '==' || value !== 'user-123') {
+              throw new Error(`Unexpected socialPublishJobs archive query: ${field} ${operator} ${value}`);
+            }
+            return {
+              get: jest.fn().mockResolvedValue(makeSnapshot([
+                {
+                  id: 'publish-instagram-latest',
+                  data: () => ({
+                    userId: 'user-123',
+                    storyId,
+                    takeReportId: 'report-2',
+                    platform: 'instagram',
+                    publishMode: 'instagram_reel',
+                    status: 'completed',
+                    updatedAt: makeTimestamp('2026-06-05T10:15:00.000Z'),
+                    completedAt: makeTimestamp('2026-06-05T10:15:00.000Z'),
+                    lastError: null,
+                  }),
+                },
+                {
+                  id: 'publish-tiktok-failed',
+                  data: () => ({
+                    userId: 'user-123',
+                    storyId,
+                    takeReportId: 'report-1',
+                    platform: 'tiktok',
+                    publishMode: 'tiktok_draft',
+                    status: 'failed',
+                    updatedAt: makeTimestamp('2026-06-05T09:00:00.000Z'),
+                    completedAt: makeTimestamp('2026-06-05T09:00:00.000Z'),
+                    lastError: {
+                      message: 'TikTok timed out.',
+                      retryable: true,
+                    },
+                  }),
+                },
+              ])),
+            };
+          }),
+        };
+      }
+
+      throw new Error(`Unexpected collection: ${collectionName}`);
+    });
+
+    const storage = {
+      bucket: jest.fn(() => ({
+        file: jest.fn((path) => ({
+          getSignedUrl: jest.fn().mockResolvedValue([`https://signed.example/${encodeURIComponent(path)}`]),
+        })),
+      })),
+    };
+
+    const app = express();
+    app.use((req, _res, next) => {
+      req.session = { userId: 'user-123', email: 'user@example.com' };
+      next();
+    });
+    app.use('/api/stories', createRouter(storage, 'test-bucket', {
+      publishJobScheduler: jest.fn(),
+    }));
+
+    const response = await request(app).get('/api/stories');
+
+    expect(response.status).toBe(200);
+    expect(response.body.stories).toHaveLength(1);
+    expect(response.body.stories[0].publishSummary).toEqual([
+      expect.objectContaining({
+        platform: 'instagram',
+        status: 'completed',
+        activityAt: '2026-06-05T10:15:00.000Z',
+        failureReason: null,
+      }),
+      expect.objectContaining({
+        platform: 'tiktok',
+        status: 'failed',
+        activityAt: '2026-06-05T09:00:00.000Z',
+        failureReason: 'TikTok timed out.',
+      }),
+    ]);
   });
 
   it('creates a publish job for the requested take instead of defaulting to the story latest take', async () => {
@@ -471,6 +690,61 @@ describe('stories routes', () => {
 
     expect(response.status).toBe(400);
     expect(response.body.error).toBe('platformOptions must be an object');
+    expect(publishJobWrites).toHaveLength(0);
+  });
+
+  it('rejects TikTok publish when unsupported platform options are provided', async () => {
+    const storyId = 'story-123';
+    const takeId = 'report-take-1';
+    const { publishJobWrites } = createPublishTestDb({
+      storyId,
+      storyData: {
+        userId: 'user-123',
+        status: 'final_recorded',
+        finalReportId: takeId,
+      },
+      reportDocs: [
+        {
+          id: takeId,
+          data: () => ({
+            story_id: storyId,
+            report_type: 'final_telling',
+            start_timestamp: makeTimestamp('2026-06-03T14:00:00.000Z'),
+            take_response_doc_id: 'response-take-1',
+            take_video_gcs_url: 'gs://test-bucket/story_videos/take-1.mp4',
+            take_media_status: 'ready',
+          }),
+        },
+      ],
+      socialAccountData: {
+        userId: 'user-123',
+        platform: 'tiktok',
+        status: 'active',
+        scopes: ['video.upload'],
+      },
+    });
+
+    const app = express();
+    app.use(express.json());
+    app.use((req, _res, next) => {
+      req.session = { userId: 'user-123', email: 'user@example.com' };
+      next();
+    });
+    app.use('/api/stories', createRouter(null, 'test-bucket', {
+      publishJobScheduler: jest.fn(),
+    }));
+
+    const response = await request(app)
+      .post(`/api/stories/${storyId}/takes/${takeId}/publish/tiktok`)
+      .send({
+        socialAccountId: 'social-1',
+        platformOptions: {
+          shareToFeed: true,
+        },
+      });
+
+    expect(response.status).toBe(400);
+    expect(response.body.error).toBe('TikTok draft publishing does not support platformOptions yet');
     expect(publishJobWrites).toHaveLength(0);
   });
 
@@ -719,7 +993,60 @@ describe('stories routes', () => {
       });
 
     expect(response.status).toBe(409);
-    expect(response.body.error).toBe('Selected social account is not active');
+    expect(response.body.error).toBe('Reconnect this account before publishing');
+    expect(publishJobWrites).toHaveLength(0);
+  });
+
+  it('rejects publish job creation when the connected account is missing required publish scopes', async () => {
+    const storyId = 'story-123';
+    const takeId = 'report-take-1';
+    const { publishJobWrites } = createPublishTestDb({
+      storyId,
+      storyData: {
+        userId: 'user-123',
+        status: 'final_recorded',
+        finalReportId: takeId,
+      },
+      reportDocs: [
+        {
+          id: takeId,
+          data: () => ({
+            story_id: storyId,
+            report_type: 'final_telling',
+            start_timestamp: makeTimestamp('2026-06-03T14:00:00.000Z'),
+            take_response_doc_id: 'response-take-1',
+            take_video_gcs_url: 'gs://test-bucket/story_videos/take-1.mp4',
+            take_media_status: 'ready',
+          }),
+        },
+      ],
+      socialAccountData: {
+        userId: 'user-123',
+        platform: 'instagram',
+        status: 'active',
+        scopes: ['instagram_basic'],
+      },
+    });
+
+    const app = express();
+    app.use(express.json());
+    app.use((req, _res, next) => {
+      req.session = { userId: 'user-123', email: 'user@example.com' };
+      next();
+    });
+    app.use('/api/stories', createRouter(null, 'test-bucket', {
+      publishJobScheduler: jest.fn(),
+    }));
+
+    const response = await request(app)
+      .post(`/api/stories/${storyId}/takes/${takeId}/publish/instagram`)
+      .send({
+        socialAccountId: 'social-1',
+      });
+
+    expect(response.status).toBe(409);
+    expect(response.body.error).toBe('Reconnect this account to restore required publishing permissions');
+    expect(response.body.missingScopes).toEqual(['instagram_content_publish']);
     expect(publishJobWrites).toHaveLength(0);
   });
 });

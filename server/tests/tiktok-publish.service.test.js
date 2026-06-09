@@ -228,6 +228,124 @@ describe('TikTok publish service', () => {
     );
   });
 
+  it('retries TikTok upload initialization when TikTok rate-limits the first attempt', async () => {
+    const db = createMemoryDb();
+    const videoBuffer = Buffer.alloc(1024 * 1024, 7);
+    const storage = createStorageMock(videoBuffer);
+    const fetchImpl = jest.fn()
+      .mockResolvedValueOnce(jsonResponse({
+        error: {
+          code: 'rate_limit_exceeded',
+          message: 'Slow down',
+          log_id: 'log-rate-limit',
+        },
+      }, 429))
+      .mockResolvedValueOnce(jsonResponse({
+        data: {
+          publish_id: 'v_inbox_file~retry',
+          upload_url: 'https://upload.tiktok.example/video',
+        },
+        error: {
+          code: 'ok',
+          message: '',
+          log_id: 'log-1',
+        },
+      }))
+      .mockResolvedValueOnce(uploadResponse(201))
+      .mockResolvedValueOnce(jsonResponse({
+        data: {
+          status: 'SEND_TO_USER_INBOX',
+          uploaded_bytes: videoBuffer.length,
+        },
+        error: {
+          code: 'ok',
+          message: '',
+          log_id: 'log-2',
+        },
+      }));
+
+    db._collections.socialAccounts.set('social-1', {
+      userId: 'user-123',
+      platform: 'tiktok',
+      status: 'active',
+      accessToken: encryptSecret('tt-access-token'),
+    });
+    db._collections.socialPublishJobs.set('publish-1', {
+      userId: 'user-123',
+      socialAccountId: 'social-1',
+      platform: 'tiktok',
+      publishMode: 'tiktok_draft',
+      status: 'queued',
+      mediaSnapshot: {
+        videoGcsUrl: 'gs://test-bucket/story_videos/take-1.mp4',
+      },
+      attemptCount: 0,
+      createdAt: new Date('2026-06-04T12:00:00.000Z'),
+      updatedAt: new Date('2026-06-04T12:00:00.000Z'),
+    });
+
+    const result = await processTikTokDraftPublishJob({
+      db,
+      storage,
+      defaultBucketName: 'test-bucket',
+      publishJobId: 'publish-1',
+      fetchImpl,
+    });
+
+    expect(result.status).toBe('awaiting_user_action');
+    expect(fetchImpl).toHaveBeenCalledTimes(4);
+    expect(fetchImpl.mock.calls[0][0]).toBe('https://open.tiktokapis.com/v2/post/publish/inbox/video/init/');
+    expect(fetchImpl.mock.calls[1][0]).toBe('https://open.tiktokapis.com/v2/post/publish/inbox/video/init/');
+  });
+
+  it('fails the job when TikTok status polling returns a non-retryable publish lookup error', async () => {
+    const db = createMemoryDb();
+    const fetchImpl = jest.fn()
+      .mockResolvedValueOnce(jsonResponse({
+        error: {
+          code: 'invalid_publish_id',
+          message: 'Unknown publish id',
+          log_id: 'log-4',
+        },
+      }, 400));
+
+    db._collections.socialAccounts.set('social-1', {
+      userId: 'user-123',
+      platform: 'tiktok',
+      status: 'active',
+      accessToken: encryptSecret('tt-access-token'),
+    });
+    db._collections.socialPublishJobs.set('publish-1', {
+      userId: 'user-123',
+      socialAccountId: 'social-1',
+      platform: 'tiktok',
+      publishMode: 'tiktok_draft',
+      status: 'processing',
+      platformPublishId: 'missing-publish',
+      lastError: null,
+      createdAt: new Date('2026-06-04T12:00:00.000Z'),
+      updatedAt: new Date('2026-06-04T12:00:00.000Z'),
+    });
+
+    const result = await refreshTikTokPublishJobStatus({
+      db,
+      publishJobId: 'publish-1',
+      fetchImpl,
+      force: true,
+    });
+
+    expect(result.status).toBe('failed');
+    expect(result.lastError).toEqual(expect.objectContaining({
+      code: 'tiktok_publish_not_found',
+      retryable: false,
+    }));
+    expect(db._collections.socialPublishJobEvents.get('publish-1')).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ type: 'status_refresh_failed', status: 'failed' }),
+      ])
+    );
+  });
+
   it('does not start a duplicate TikTok upload while another worker lease is active', async () => {
     const db = createMemoryDb();
     const fetchImpl = jest.fn();

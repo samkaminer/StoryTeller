@@ -274,6 +274,76 @@
     .publish-feedback.error,
     .share-help.error { color: #8C3B2A; }
     .publish-feedback.success { color: #446137; }
+    .publish-history {
+      width: 100%;
+      max-width: 320px;
+      display: flex;
+      flex-direction: column;
+      gap: 0.9rem;
+    }
+    .publish-history-list {
+      display: grid;
+      gap: 0.7rem;
+    }
+    .publish-history-item,
+    .publish-history-empty {
+      background: rgba(234, 227, 204, 0.55);
+      border: 1px solid rgba(217, 208, 184, 0.9);
+      border-radius: 16px;
+      padding: 0.95rem 1rem;
+      display: flex;
+      flex-direction: column;
+      gap: 0.65rem;
+    }
+    .publish-history-row {
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 0.75rem;
+    }
+    .publish-history-platform {
+      font-family: var(--fd);
+      font-size: 0.98rem;
+      letter-spacing: -0.01em;
+    }
+    .publish-history-meta,
+    .publish-history-reason {
+      font-size: 0.77rem;
+      color: var(--muted);
+      line-height: 1.45;
+    }
+    .publish-history-reason {
+      color: #8C3B2A;
+    }
+    .publish-history-actions {
+      display: flex;
+      justify-content: flex-end;
+    }
+    .publish-history-retry {
+      padding: 0.55rem 0.9rem;
+      border-radius: 999px;
+      border: 1px solid var(--border);
+      background: transparent;
+      color: var(--text);
+      font-family: var(--fu);
+      font-size: 0.8rem;
+      cursor: pointer;
+      transition: border-color 0.15s, color 0.15s;
+    }
+    .publish-history-retry:hover {
+      border-color: var(--text);
+      color: var(--text);
+    }
+    .publish-history-retry:disabled {
+      opacity: 0.55;
+      cursor: not-allowed;
+    }
+    .publish-history-empty {
+      color: var(--muted);
+      font-size: 0.8rem;
+      line-height: 1.5;
+      text-align: center;
+    }
     .manual-share-header {
       display: flex;
       flex-direction: column;
@@ -573,36 +643,29 @@
         <div class="publish-grid">
           <article class="publish-card" id="tiktokPublishCard">
             <div class="publish-card-head">
-              <div>
-                <h3 class="publish-card-title">TikTok</h3>
-                <p class="publish-card-summary" id="tiktokPublishSummary">Connect TikTok to send this take as a draft upload.</p>
-              </div>
+              <h3 class="publish-card-title">TikTok</h3>
               <span class="publish-badge" id="tiktokPublishBadge">Not connected</span>
-            </div>
-            <p class="publish-card-meta" id="tiktokPublishMeta">Draft uploads stay take-scoped and continue inside TikTok for final edits.</p>
-            <div class="publish-card-status">
-              <p class="publish-card-status-text" id="tiktokPublishStatusText">Choose a take, then connect TikTok to publish it without leaving StoryTeller.</p>
             </div>
             <button class="publish-card-btn" id="tiktokPublishActionBtn" type="button">Connect</button>
           </article>
 
           <article class="publish-card" id="instagramPublishCard">
             <div class="publish-card-head">
-              <div>
-                <h3 class="publish-card-title">Instagram Reels</h3>
-                <p class="publish-card-summary" id="instagramPublishSummary">Connect Instagram to publish this take as a Reel.</p>
-              </div>
+              <h3 class="publish-card-title">Instagram Reels</h3>
               <span class="publish-badge" id="instagramPublishBadge">Not connected</span>
-            </div>
-            <p class="publish-card-meta" id="instagramPublishMeta">Reels publish directly from the selected take and use the account linked to your Meta login.</p>
-            <div class="publish-card-status">
-              <p class="publish-card-status-text" id="instagramPublishStatusText">Once connected, you can add a caption, choose Reel options, and publish the selected take.</p>
             </div>
             <button class="publish-card-btn" id="instagramPublishActionBtn" type="button">Connect</button>
           </article>
         </div>
 
         <p class="publish-feedback" id="publishFeedback"></p>
+      </div>
+
+      <div class="publish-history">
+        <p class="share-label" id="publishHistoryLabel">Publish history for this take</p>
+        <div class="publish-history-list" id="publishHistoryList">
+          <div class="publish-history-empty">Choose a take to see where it has been published.</div>
+        </div>
       </div>
 
       <div class="manual-share-section">
@@ -769,6 +832,7 @@
       tiktok: null,
       instagram: null,
     };
+    let retryingPublishJobId = null;
     let publishModalState = {
       open: false,
       platform: null,
@@ -794,8 +858,8 @@
           instagram: { connected: false, account: null },
         },
         platformConfigs: {
-          tiktok: { configured: null, missingEnvVars: [], setupError: null },
-          instagram: { configured: null, missingEnvVars: [], setupError: null },
+          tiktok: { configured: null },
+          instagram: { configured: null },
         },
       };
     }
@@ -827,7 +891,10 @@
       const response = await fetch(url, options);
       const payload = await response.json().catch(() => ({}));
       if (!response.ok) {
-        throw new Error(payload.error || ('HTTP ' + response.status));
+        const error = new Error(payload.error || ('HTTP ' + response.status));
+        error.payload = payload;
+        error.status = response.status;
+        throw error;
       }
       return payload;
     }
@@ -962,8 +1029,6 @@
     function getPlatformConfig(platform) {
       return socialAccountsState.platformConfigs?.[platform] || {
         configured: null,
-        missingEnvVars: [],
-        setupError: null,
       };
     }
 
@@ -996,6 +1061,83 @@
       if (!take) return 'Selected take';
       const label = getTakeLabelById(take.reportId || take.takeId);
       return take.isLatest ? (label + ' • newest recording') : label;
+    }
+
+    function getPublishJobActivityAt(job) {
+      return job?.activityAt || job?.completedAt || job?.updatedAt || job?.startedAt || job?.createdAt || job?.queuedAt || null;
+    }
+
+    function comparePublishHistoryDesc(left, right) {
+      const leftTime = Date.parse(getPublishJobActivityAt(left) || 0) || 0;
+      const rightTime = Date.parse(getPublishJobActivityAt(right) || 0) || 0;
+      return rightTime - leftTime;
+    }
+
+    function getStoryPublishJobs() {
+      return Array.isArray(currentStoryData?.publishJobs) ? currentStoryData.publishJobs.slice() : [];
+    }
+
+    function getPublishHistoryForTake(take = currentSelectedTake) {
+      const takeKey = take?.reportId || take?.takeId || null;
+      if (!takeKey) return [];
+      return getStoryPublishJobs()
+        .filter((job) => job && (job.takeReportId === takeKey || job.takeResponseDocId === takeKey))
+        .sort(comparePublishHistoryDesc);
+    }
+
+    function getLatestPublishJobForTakePlatform(platform, take = currentSelectedTake) {
+      return getPublishHistoryForTake(take).find((job) => job.platform === platform) || null;
+    }
+
+    function canDisplayRetryForJob(job) {
+      if (!job?.canRetry) return false;
+      const latestForPlatform = getLatestPublishJobForTakePlatform(job.platform);
+      return latestForPlatform?.publishJobId === job.publishJobId;
+    }
+
+    function upsertStoryPublishJob(job) {
+      if (!job) return null;
+
+      const nextJobs = getStoryPublishJobs();
+      const existingIndex = nextJobs.findIndex((entry) => entry.publishJobId === job.publishJobId);
+      if (existingIndex === -1) {
+        nextJobs.push(job);
+      } else {
+        nextJobs[existingIndex] = {
+          ...nextJobs[existingIndex],
+          ...job,
+        };
+      }
+
+      nextJobs.sort(comparePublishHistoryDesc);
+
+      if (currentStoryData) {
+        currentStoryData.publishJobs = nextJobs;
+        if (Array.isArray(currentStoryData.takes)) {
+          currentStoryData.takes = currentStoryData.takes.map((take) => {
+            const takeKey = take.reportId || take.takeId;
+            return {
+              ...take,
+              publishHistory: nextJobs.filter((entry) => entry.takeReportId === takeKey),
+            };
+          });
+        }
+      }
+
+      publishJobsByPlatform[job.platform] = job;
+      return job;
+    }
+
+    function formatPublishTimestamp(isoString) {
+      if (!isoString) return 'Just now';
+      const date = new Date(isoString);
+      if (Number.isNaN(date.getTime())) return 'Just now';
+      return date.toLocaleString('en-US', {
+        month: 'short',
+        day: 'numeric',
+        hour: 'numeric',
+        minute: '2-digit',
+      });
     }
 
     function getStoredPublishJobIds() {
@@ -1107,13 +1249,15 @@
           clearStoredPublishJobId(platform);
           publishJobsByPlatform[platform] = null;
           renderPublishCards();
+          renderPublishHistory();
           renderPublishModal();
           return;
         }
 
-        publishJobsByPlatform[platform] = job;
+        upsertStoryPublishJob(job);
         rememberPublishJobId(platform, job.publishJobId);
         renderPublishCards();
+        renderPublishHistory();
         renderPublishModal();
 
         if (isFinalPublishStatus(job.status)) {
@@ -1136,6 +1280,7 @@
       } catch (error) {
         console.error('[story-result] publish status error:', error);
         renderPublishCards();
+        renderPublishHistory();
         renderPublishModal();
         pollState.timer = setTimeout(() => {
           pollPublishJob(platform, activeJobId).catch((innerError) => {
@@ -1169,7 +1314,7 @@
             clearStoredPublishJobId(platform);
             continue;
           }
-          publishJobsByPlatform[platform] = job;
+          upsertStoryPublishJob(job);
           jobs.push(job);
           if (!isFinalPublishStatus(job.status)) {
             beginPublishPolling(platform, job.publishJobId);
@@ -1180,6 +1325,7 @@
       }
 
       renderPublishCards();
+      renderPublishHistory();
       renderPublishModal();
       return jobs;
     }
@@ -1214,6 +1360,7 @@
         socialAccountsRequestInFlight = null;
         socialUiState = { ...socialUiState, isLoading: false };
         renderPublishCards();
+        renderPublishHistory();
       }
     }
 
@@ -1308,6 +1455,7 @@
       } finally {
         socialUiState = { ...socialUiState, actionPlatform: null };
         renderPublishCards();
+        renderPublishHistory();
       }
     }
 
@@ -1343,51 +1491,16 @@
     function renderPublishCards() {
       SOCIAL_PLATFORMS.forEach((platform) => {
         const platformState = getPlatformState(platform);
-        const platformConfig = getPlatformConfig(platform);
         const account = platformState.account || null;
         const button = document.getElementById(platform + 'PublishActionBtn');
         const badge = document.getElementById(platform + 'PublishBadge');
-        const summary = document.getElementById(platform + 'PublishSummary');
-        const meta = document.getElementById(platform + 'PublishMeta');
-        const statusText = document.getElementById(platform + 'PublishStatusText');
-        const job = publishJobsByPlatform[platform];
+        const job = getLatestPublishJobForTakePlatform(platform);
         const jobPresentation = getPublishJobPresentation(platform, job);
-        const label = getPlatformLabel(platform);
-        const isConfigured = platformConfig.configured !== false;
         const isConnected = platformState.connected && account?.status === 'active';
         const needsReconnect = account && (account.status === 'reauth_required' || account.status === 'revoked');
         const takeReady = Boolean(currentSelectedTake?.videoSignedUrl && currentSelectedTake?.finalVideoGcs);
         const publishBusy = Boolean(job && !isFinalPublishStatus(job.status));
         const loadingAccounts = socialUiState.isLoading && !account && !socialAccountsState.accounts.length;
-        const selectedTakeLabel = getSelectedTakeDescriptor(currentSelectedTake);
-
-        if (summary) {
-          if (loadingAccounts) {
-            summary.textContent = 'Checking your ' + label + ' connection…';
-          } else if (!account) {
-            summary.textContent = 'Connect ' + label + ' to publish ' + (selectedTakeLabel || 'this take') + ' from StoryTeller.';
-          } else {
-            summary.textContent = label + ' account: ' + getPlatformAccountLabel(account, platform);
-          }
-        }
-
-        if (meta) {
-          if (loadingAccounts) {
-            meta.textContent = 'Loading connected-account status for this platform.';
-          } else if (!isConfigured && !account) {
-            meta.textContent = platformConfig.missingEnvVars?.length
-              ? ('Server setup is incomplete: ' + platformConfig.missingEnvVars.join(', '))
-              : (platformConfig.setupError || (label + ' is not configured on this server.'));
-          } else if (platform === 'tiktok') {
-            meta.textContent = isConnected
-              ? 'Draft uploads stay tied to the selected take and finish inside TikTok.'
-              : 'Connect TikTok to send the selected take as a draft upload.';
-          } else {
-            meta.textContent = isConnected
-              ? 'Instagram publishes the selected take as a Reel using your connected professional account.'
-              : 'Connect Instagram to publish the selected take directly as a Reel.';
-          }
-        }
 
         if (badge) {
           badge.className = 'publish-badge';
@@ -1397,9 +1510,6 @@
           } else if (loadingAccounts) {
             badge.textContent = 'Loading';
             badge.classList.add('pending');
-          } else if (!isConfigured && !account) {
-            badge.textContent = 'Setup required';
-            badge.classList.add('warning');
           } else if (needsReconnect) {
             badge.textContent = 'Reconnect needed';
             badge.classList.add('warning');
@@ -1407,28 +1517,8 @@
             badge.textContent = 'Connected';
             badge.classList.add('success');
           } else {
-            badge.textContent = formatConnectionStatus(account?.status, false);
+            badge.textContent = 'Not connected';
             badge.classList.add('pending');
-          }
-        }
-
-        if (statusText) {
-          if (jobPresentation) {
-            const jobTake = getTakeLabelById(job?.takeReportId);
-            const takePrefix = jobTake ? (jobTake + ': ') : '';
-            statusText.textContent = takePrefix + jobPresentation.message;
-          } else if (loadingAccounts) {
-            statusText.textContent = 'Checking whether ' + label + ' is already connected for this account.';
-          } else if (!takeReady) {
-            statusText.textContent = 'This take is still processing. Publish will unlock when the video is ready.';
-          } else if (!account) {
-            statusText.textContent = 'Choose Connect to authorize ' + label + ' for this selected take.';
-          } else if (needsReconnect) {
-            statusText.textContent = 'Reconnect ' + label + ' before publishing the selected take.';
-          } else if (isConnected) {
-            statusText.textContent = 'Ready to publish ' + selectedTakeLabel + '.';
-          } else {
-            statusText.textContent = 'This ' + label + ' account is not active yet.';
           }
         }
 
@@ -1442,18 +1532,15 @@
           } else if (loadingAccounts) {
             buttonLabel = 'Loading…';
             disabled = true;
-          } else if (!takeReady) {
-            buttonLabel = 'Take processing';
-            disabled = true;
-          } else if (!isConfigured && !account) {
-            buttonLabel = 'Unavailable';
-            disabled = true;
           } else if (!account || account.status === 'disconnected') {
             buttonLabel = 'Connect';
           } else if (needsReconnect) {
             buttonLabel = 'Reconnect';
           } else if (publishBusy) {
             buttonLabel = 'Publishing…';
+            disabled = true;
+          } else if (!takeReady) {
+            buttonLabel = 'Publish';
             disabled = true;
           } else {
             buttonLabel = 'Publish';
@@ -1463,6 +1550,65 @@
           button.disabled = disabled;
           button.classList.toggle('secondary', buttonLabel === 'Reconnect' || buttonLabel === 'Connect');
         }
+      });
+    }
+
+    function renderPublishHistory() {
+      const historyLabel = document.getElementById('publishHistoryLabel');
+      const historyList = document.getElementById('publishHistoryList');
+      const selectedTakeLabel = getSelectedTakeDescriptor(currentSelectedTake);
+      const publishHistory = getPublishHistoryForTake();
+
+      historyLabel.textContent = selectedTakeLabel ? ('Publish history for ' + selectedTakeLabel) : 'Publish history for this take';
+      historyList.innerHTML = '';
+
+      if (!publishHistory.length) {
+        const emptyState = document.createElement('div');
+        emptyState.className = 'publish-history-empty';
+        emptyState.textContent = 'This take has not been published yet. Use the cards above to publish it or connect an account first.';
+        historyList.appendChild(emptyState);
+        return;
+      }
+
+      publishHistory.forEach((job) => {
+        const presentation = getPublishJobPresentation(job.platform, job);
+        const item = document.createElement('article');
+        item.className = 'publish-history-item';
+
+        const reasonHtml = job.failureReason
+          ? '<p class="publish-history-reason">' + job.failureReason + '</p>'
+          : '';
+
+        item.innerHTML = `
+          <div class="publish-history-row">
+            <div>
+              <p class="publish-history-platform">${getPlatformLabel(job.platform)}</p>
+              <p class="publish-history-meta">${formatPublishTimestamp(getPublishJobActivityAt(job))}</p>
+            </div>
+            <span class="publish-badge ${presentation?.tone || ''}">${presentation?.label || 'Processing'}</span>
+          </div>
+          <p class="publish-history-meta">${job.statusMessage || presentation?.message || 'Publish status available.'}</p>
+          ${reasonHtml}
+        `;
+
+        if (canDisplayRetryForJob(job)) {
+          const actions = document.createElement('div');
+          actions.className = 'publish-history-actions';
+          const retryButton = document.createElement('button');
+          retryButton.type = 'button';
+          retryButton.className = 'publish-history-retry';
+          retryButton.textContent = retryingPublishJobId === job.publishJobId ? 'Retrying…' : 'Retry';
+          retryButton.disabled = retryingPublishJobId === job.publishJobId;
+          retryButton.addEventListener('click', () => {
+            retryPublishJob(job.publishJobId).catch((error) => {
+              console.error('[story-result] retry publish handler error:', error);
+            });
+          });
+          actions.appendChild(retryButton);
+          item.appendChild(actions);
+        }
+
+        historyList.appendChild(item);
       });
     }
 
@@ -1495,11 +1641,8 @@
 
       const label = getPlatformLabel(platform);
       const account = getPlatformState(platform).account || null;
-      const job = publishJobsByPlatform[platform];
-      const jobMatchesCurrentTake = !job || !currentSelectedTake || (
-        job.takeReportId === currentSelectedTake.reportId || job.takeReportId === currentSelectedTake.takeId
-      );
-      const jobPresentation = jobMatchesCurrentTake ? getPublishJobPresentation(platform, job) : null;
+      const job = getLatestPublishJobForTakePlatform(platform);
+      const jobPresentation = getPublishJobPresentation(platform, job);
       const submitBtn = document.getElementById('publishSubmitBtn');
       const captionHint = document.getElementById('publishCaptionHint');
       const previewVideo = document.getElementById('publishPreviewVideo');
@@ -1627,6 +1770,49 @@
       return options;
     }
 
+    async function retryPublishJob(publishJobId) {
+      if (!publishJobId || retryingPublishJobId) return;
+
+      retryingPublishJobId = publishJobId;
+      renderPublishHistory();
+
+      try {
+        const token = await getAuthToken();
+        const payload = await fetchJson('/api/social/publishes/' + encodeURIComponent(publishJobId) + '/retry', {
+          method: 'POST',
+          headers: {
+            Authorization: 'Bearer ' + token,
+          },
+        });
+
+        const publishJob = payload.publishJob || null;
+        if (!publishJob?.publishJobId) {
+          throw new Error('The retry was accepted, but no publish job was returned.');
+        }
+
+        upsertStoryPublishJob(publishJob);
+        rememberPublishJobId(publishJob.platform, publishJob.publishJobId);
+        beginPublishPolling(publishJob.platform, publishJob.publishJobId);
+        openPublishDrawer(publishJob.platform);
+        setPublishFeedback(getPlatformLabel(publishJob.platform) + ' retry queued for ' + getSelectedTakeDescriptor(currentSelectedTake) + '.', 'success');
+      } catch (error) {
+        const existingPublishJob = error.payload?.publishJob || null;
+        if (existingPublishJob?.publishJobId) {
+          upsertStoryPublishJob(existingPublishJob);
+          rememberPublishJobId(existingPublishJob.platform, existingPublishJob.publishJobId);
+          if (!isFinalPublishStatus(existingPublishJob.status)) {
+            beginPublishPolling(existingPublishJob.platform, existingPublishJob.publishJobId);
+          }
+        }
+        setPublishFeedback(error.message || 'Failed to retry this publish job.', 'error');
+      } finally {
+        retryingPublishJobId = null;
+        renderPublishCards();
+        renderPublishHistory();
+        renderPublishModal();
+      }
+    }
+
     async function submitPublishFromModal() {
       const platform = publishModalState.platform;
       if (!platform || !currentSelectedTake || publishModalState.isSubmitting) return;
@@ -1679,7 +1865,7 @@
           throw new Error('The publish job was created, but no job ID was returned.');
         }
 
-        publishJobsByPlatform[platform] = publishJob;
+        upsertStoryPublishJob(publishJob);
         rememberPublishJobId(platform, publishJob.publishJobId);
         beginPublishPolling(platform, publishJob.publishJobId);
         publishModalState = {
@@ -1699,12 +1885,17 @@
       } finally {
         publishModalState = { ...publishModalState, isSubmitting: false };
         renderPublishCards();
+        renderPublishHistory();
         renderPublishModal();
       }
     }
 
     function renderResult(data) {
       currentStoryData = data;
+      currentStoryData.publishJobs = Array.isArray(data.publishJobs) ? data.publishJobs.slice() : [];
+      Object.values(publishJobsByPlatform).filter(Boolean).forEach((job) => {
+        upsertStoryPublishJob(job);
+      });
 
       const selectedTake = selectTake(data);
       const availableTakes = getAvailableTakes(data);
@@ -1735,6 +1926,7 @@
 
       updateShareActions(selectedTake, availableTakes.length);
       renderPublishCards();
+      renderPublishHistory();
       renderPublishModal();
 
       const retakeSection = document.getElementById('retakeSection');

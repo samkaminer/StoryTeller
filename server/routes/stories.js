@@ -1,6 +1,7 @@
 const express = require('express');
 const admin = require('firebase-admin');
 const { requireAuth } = require('../middleware/auth');
+const rateLimiters = require('../middleware/rateLimiter');
 const {
   gcsSignedUrl,
   loadStoryDoc,
@@ -10,10 +11,18 @@ const {
   resolveStoryTake,
 } = require('../utils/story-takes');
 const {
+  getEffectiveSocialAccountStatus,
   getOwnedSocialAccount,
   createSocialPublishJob,
+  listOwnedPublishJobs,
 } = require('../utils/social-store');
+const { logSocialAudit } = require('../utils/social-audit');
 const { scheduleSocialPublishJob } = require('../services/social-publish-runner');
+
+const REQUIRED_PUBLISH_SCOPES = {
+  tiktok: ['video.upload'],
+  instagram: ['instagram_basic', 'instagram_content_publish'],
+};
 
 function validatePublishRequest(platform, body = {}) {
   if (!body.socialAccountId || typeof body.socialAccountId !== 'string') {
@@ -33,7 +42,18 @@ function validatePublishRequest(platform, body = {}) {
   }
 
   const platformOptions = body.platformOptions || {};
+  const optionKeys = Object.keys(platformOptions);
+  if (platform === 'tiktok' && optionKeys.length > 0) {
+    return 'TikTok draft publishing does not support platformOptions yet';
+  }
+
   if (platform === 'instagram') {
+    const supportedOptionKeys = new Set(['shareToFeed', 'thumbOffsetMs', 'useTakeThumbnailAsCover']);
+    const unsupportedOption = optionKeys.find((key) => !supportedOptionKeys.has(key));
+    if (unsupportedOption) {
+      return `platformOptions.${unsupportedOption} is not supported for Instagram Reels`;
+    }
+
     if (platformOptions.shareToFeed !== undefined && typeof platformOptions.shareToFeed !== 'boolean') {
       return 'platformOptions.shareToFeed must be a boolean';
     }
@@ -58,6 +78,12 @@ function validatePublishRequest(platform, body = {}) {
   }
 
   return null;
+}
+
+function getMissingPublishScopes(platform, scopes = []) {
+  const grantedScopes = Array.isArray(scopes) ? scopes : [];
+  const requiredScopes = REQUIRED_PUBLISH_SCOPES[platform] || [];
+  return requiredScopes.filter((scope) => !grantedScopes.includes(scope));
 }
 
 function createPublishHandler({ platform, publishMode, publishJobScheduler }) {
@@ -91,8 +117,16 @@ function createPublishHandler({ platform, publishMode, publishJobScheduler }) {
       if (account.data.platform !== platform) {
         return res.status(400).json({ error: `Selected social account is not a ${platform} account` });
       }
-      if (account.data.status !== 'active') {
-        return res.status(409).json({ error: 'Selected social account is not active' });
+      if (getEffectiveSocialAccountStatus(account.data) !== 'active') {
+        return res.status(409).json({ error: 'Reconnect this account before publishing' });
+      }
+
+      const missingScopes = getMissingPublishScopes(platform, account.data.scopes);
+      if (missingScopes.length > 0) {
+        return res.status(409).json({
+          error: 'Reconnect this account to restore required publishing permissions',
+          missingScopes,
+        });
       }
 
       const publishJob = await createSocialPublishJob(db, req.user.uid, {
@@ -117,6 +151,16 @@ function createPublishHandler({ platform, publishMode, publishJobScheduler }) {
         publishJob,
       });
 
+      logSocialAudit('publish_job_created', {
+        platform,
+        userId: req.user.uid,
+        socialAccountId,
+        publishJobId: publishJob.publishJobId,
+        storyId,
+        takeReportId: take.reportId || take.takeId,
+        message: `Queued ${publishMode} publish job`,
+      });
+
       if (typeof publishJobScheduler === 'function') {
         publishJobScheduler({
           db,
@@ -133,6 +177,40 @@ function createPublishHandler({ platform, publishMode, publishJobScheduler }) {
       res.status(500).json({ error: 'Failed to create publish job' });
     }
   };
+}
+
+function getPublishJobActivityAt(publishJob) {
+  return publishJob.completedAt
+    || publishJob.updatedAt
+    || publishJob.startedAt
+    || publishJob.createdAt
+    || publishJob.queuedAt
+    || null;
+}
+
+function decoratePublishJob(publishJob) {
+  return {
+    ...publishJob,
+    activityAt: getPublishJobActivityAt(publishJob),
+    failureReason: publishJob.lastError?.message || null,
+  };
+}
+
+function summarizeStoryPublishJobs(publishJobs) {
+  const latestByPlatform = new Map();
+  for (const publishJob of publishJobs) {
+    if (!publishJob?.platform) continue;
+    if (!latestByPlatform.has(publishJob.platform)) {
+      latestByPlatform.set(publishJob.platform, {
+        platform: publishJob.platform,
+        status: publishJob.status || null,
+        activityAt: getPublishJobActivityAt(publishJob),
+        failureReason: publishJob.lastError?.message || null,
+      });
+    }
+  }
+
+  return Array.from(latestByPlatform.values());
 }
 
 function createRouter(storage, bucketName, options = {}) {
@@ -152,16 +230,25 @@ function createRouter(storage, bucketName, options = {}) {
         .where('userId', '==', req.user.uid)
         .limit(50)
         .get();
+      const ownedPublishJobs = await listOwnedPublishJobs(db, req.user.uid);
+      const publishJobsByStoryId = new Map();
+      ownedPublishJobs.forEach((publishJob) => {
+        const storyPublishJobs = publishJobsByStoryId.get(publishJob.data.storyId) || [];
+        storyPublishJobs.push(publishJob.serialized);
+        publishJobsByStoryId.set(publishJob.data.storyId, storyPublishJobs);
+      });
 
       const stories = await Promise.all(snapshot.docs.map(async (doc) => {
         const data = doc.data();
         const thumbnailSignedUrl = await gcsSignedUrl(storage, bucketName, data.thumbnail_gcs);
+        const storyPublishJobs = publishJobsByStoryId.get(doc.id) || [];
         return {
           id: doc.id,
           promptText: data.promptText || null,
           status: data.status || null,
           createdAt: data.createdAt?.toDate?.()?.toISOString() || null,
           thumbnailSignedUrl,
+          publishSummary: summarizeStoryPublishJobs(storyPublishJobs),
         };
       }));
 
@@ -228,12 +315,14 @@ function createRouter(storage, bucketName, options = {}) {
 
   router.post(
     '/:storyId/takes/:takeId/publish/tiktok',
+    rateLimiters.socialPublishAction,
     requireAuth,
     createPublishHandler({ platform: 'tiktok', publishMode: 'tiktok_draft', publishJobScheduler })
   );
 
   router.post(
     '/:storyId/takes/:takeId/publish/instagram',
+    rateLimiters.socialPublishAction,
     requireAuth,
     createPublishHandler({ platform: 'instagram', publishMode: 'instagram_reel', publishJobScheduler })
   );
@@ -251,10 +340,19 @@ function createRouter(storage, bucketName, options = {}) {
         const legacyTake = await buildLegacyStoryTake(storage, bucketName, doc.id, data);
         if (legacyTake) takes = [legacyTake];
       }
+      const publishJobs = await listOwnedPublishJobs(db, req.user.uid, { storyId });
+      const publishJobsByTakeReportId = new Map();
+      const decoratedPublishJobs = publishJobs.map((publishJob) => decoratePublishJob(publishJob.serialized));
+      decoratedPublishJobs.forEach((publishJob) => {
+        const takeJobs = publishJobsByTakeReportId.get(publishJob.takeReportId) || [];
+        takeJobs.push(publishJob);
+        publishJobsByTakeReportId.set(publishJob.takeReportId, takeJobs);
+      });
 
       takes = takes.map((take, index) => ({
         ...take,
         isLatest: take.reportId ? take.reportId === data.finalReportId : index === 0,
+        publishHistory: publishJobsByTakeReportId.get(take.reportId || take.takeId) || [],
       }));
 
       const latestTake = takes.find((take) => take.isLatest) || takes[0] || null;
@@ -294,6 +392,7 @@ function createRouter(storage, bucketName, options = {}) {
         mediaProcessingError,
         mediaProcessingFailedAt,
         notes: data.notes || [],
+        publishJobs: decoratedPublishJobs,
         takes,
       });
     } catch (err) {

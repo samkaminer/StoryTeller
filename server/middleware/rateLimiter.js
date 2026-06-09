@@ -34,6 +34,24 @@ const rateLimiters = {
     legacyHeaders: false,
   }),
 
+  // Moderate limit for social publish creation and retries
+  socialPublishAction: createJsonRateLimiter({
+    windowMs: 5 * 60 * 1000, // 5 minutes
+    max: 20,
+    message: 'Too many social publishing actions, please wait a moment before trying again',
+    standardHeaders: true,
+    legacyHeaders: false,
+  }),
+
+  // Higher limit for polling publish status
+  socialPublishStatus: createJsonRateLimiter({
+    windowMs: 1 * 60 * 1000, // 1 minute
+    max: 120,
+    message: 'Too many publish status checks, please slow down',
+    standardHeaders: true,
+    legacyHeaders: false,
+  }),
+
   // Moderate limit for API endpoints
   api: createJsonRateLimiter({
     windowMs: 1 * 60 * 1000, // 1 minute

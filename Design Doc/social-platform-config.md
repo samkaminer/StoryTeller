@@ -42,10 +42,37 @@ openssl rand -base64 32
 ```
 
 - `TIKTOK_REDIRECT_URI` and `META_REDIRECT_URI` must exactly match the callback URLs configured in each developer portal.
-- Keep the redirect URIs on the same host and port as the local app you are actually testing. If Storyteller is running on `http://localhost:3002`, use `http://localhost:3002/api/social/tiktok/connect/callback` and `http://localhost:3002/api/social/instagram/connect/callback`, not the older `3001` examples.
+- Pick one local port and use it everywhere. `PORT`, `BASE_URL`, `TIKTOK_REDIRECT_URI`, and `META_REDIRECT_URI` must all point at the same local StoryTeller origin.
 - Use HTTPS for all non-local redirect URIs. Localhost may use HTTP, but deployed callback URLs should be HTTPS and on the same Storyteller host the popup opener uses.
 - `META_WEBHOOK_VERIFY_TOKEN` is not used by the connected-account flow yet, but keep it reserved now because Meta webhook setup is part of the same app configuration you will need for publish status later.
 - TikTok draft publishing in the current backend uses the existing Google Cloud Storage credentials already required elsewhere in StoryTeller. There are no TikTok-specific storage env vars beyond the connected-account settings above.
+
+## Local development checklist
+
+For a working local social-publishing setup:
+
+1. Copy `.env.example` to `.env`.
+2. Choose a local port, for example `3001`, and keep all of these aligned:
+   - `PORT`
+   - `BASE_URL`
+   - `TIKTOK_REDIRECT_URI`
+   - `META_REDIRECT_URI`
+3. Start the app with `npm run dev` or `npm start`.
+4. Confirm the app is reachable on that same origin before testing OAuth:
+   - `/story.html`
+   - `/story-result.html`
+   - `/health`
+5. In Firebase Authentication, add these Authorized Domains for local sign-in:
+   - `localhost`
+   - `127.0.0.1`
+6. In TikTok for Developers and Meta for Developers, register callback URLs that match the exact local StoryTeller origin you picked in step 2.
+
+Current local behavior and dependencies:
+
+- StoryTeller serves the social UI and callback handlers from the same Express app. If the app is running on `http://localhost:3001`, the social callback routes must also use `http://localhost:3001/...`.
+- TikTok draft publishing needs working Google Cloud Storage credentials because the server reads the selected take from GCS during upload.
+- Missing optional integrations such as Mem0 do not block the social routes from loading locally.
+- The campaign sender can emit an unrelated Firestore index warning during startup; that warning does not block connected-account or publish testing.
 
 ## Current TikTok publish behavior
 
@@ -64,6 +91,7 @@ Important current limitations and assumptions:
 - The frontend should poll `GET /api/social/publishes/:publishJobId` for progress instead of assuming the initial `202` means the draft is already available in TikTok.
 - StoryTeller must be able to decrypt the stored TikTok access token using `SOCIAL_TOKEN_ENCRYPTION_KEY_BASE64`.
 - The connected TikTok account must still be in `active` status at publish time and must retain the `video.upload` grant.
+- StoryTeller now attempts a server-side TikTok access-token refresh shortly before expiry. If refresh is rejected or the refresh token has also expired, the account is marked `reauth_required` and the publish job fails with a reconnect-safe message.
 
 ## TikTok for Developers
 
@@ -147,6 +175,7 @@ Current Instagram publish behavior:
   - `thumb_offset`
   - `cover_url` derived from the take thumbnail when explicitly requested
 - This implementation does not support Stories, carousel posts, collaborators, user tags, location tagging, shopping tags, or product tagging.
+- StoryTeller stores the long-lived Meta user token returned by Facebook Login for Business. When that token is near expiry or Meta signals it is invalid, the account is marked `reauth_required` and the user must reconnect before another publish attempt.
 
 Important Meta constraints from the current official docs:
 
@@ -172,3 +201,4 @@ Before testing the new routes on a real environment:
 3. Confirm the Storyteller callback host matches `BASE_URL` and the deployed HTTPS domain.
 4. Add internal test users to both provider apps before the apps are live.
 5. Keep provider secrets only in environment variables or deployment secrets, never in Firestore or the browser.
+6. Expect local testing to depend on real Firebase, TikTok, Meta, and Google Cloud credentials. Jest coverage exercises the publish-job logic, retries, and token-lifecycle handling, but it does not replace live OAuth/provider validation.

@@ -1,6 +1,7 @@
 const express = require('express');
 const request = require('supertest');
 const { createRouter: createSocialRouter } = require('../routes/social');
+const { encryptSecret } = require('../utils/social-crypto');
 
 function createMemoryDb() {
   const collections = {
@@ -145,12 +146,10 @@ describe('social connected account routes', () => {
 
     expect(response.status).toBe(200);
     expect(response.body.platformConfigs.tiktok.configured).toBe(true);
-    expect(response.body.platformConfigs.tiktok.missingEnvVars).toEqual([]);
     expect(response.body.platformConfigs.instagram.configured).toBe(true);
-    expect(response.body.platformConfigs.instagram.missingEnvVars).toEqual([]);
   });
 
-  it('returns missing env vars when TikTok OAuth is not configured', async () => {
+  it('sanitizes provider config errors when TikTok OAuth is not configured', async () => {
     delete process.env.TIKTOK_CLIENT_KEY;
     delete process.env.TIKTOK_CLIENT_SECRET;
     delete process.env.TIKTOK_REDIRECT_URI;
@@ -163,24 +162,14 @@ describe('social connected account routes', () => {
       .post('/api/social/tiktok/connect/start')
       .send({});
 
-    expect(response.status).toBe(500);
-    expect(response.body.error).toBe('TikTok OAuth is not configured');
-    expect(response.body.missingEnvVars).toEqual(expect.arrayContaining([
-      'TIKTOK_CLIENT_KEY',
-      'TIKTOK_CLIENT_SECRET',
-      'TIKTOK_REDIRECT_URI',
-      'SOCIAL_TOKEN_ENCRYPTION_KEY_BASE64',
-    ]));
+    expect(response.status).toBe(503);
+    expect(response.body.error).toBe('TikTok connection is not available right now.');
+    expect(response.body.missingEnvVars).toBeUndefined();
 
     const accountsResponse = await request(app).get('/api/social/accounts');
     expect(accountsResponse.status).toBe(200);
     expect(accountsResponse.body.platformConfigs.tiktok.configured).toBe(false);
-    expect(accountsResponse.body.platformConfigs.tiktok.missingEnvVars).toEqual(expect.arrayContaining([
-      'TIKTOK_CLIENT_KEY',
-      'TIKTOK_CLIENT_SECRET',
-      'TIKTOK_REDIRECT_URI',
-      'SOCIAL_TOKEN_ENCRYPTION_KEY_BASE64',
-    ]));
+    expect(accountsResponse.body.platformConfigs.tiktok.missingEnvVars).toBeUndefined();
   });
 
   it('drops non-relative redirect paths from OAuth state', async () => {
@@ -457,5 +446,150 @@ describe('social connected account routes', () => {
     expect(response.body.publishJob.platformStatus).toBe('PUBLISHED');
     expect(response.body.publishJob.platformContainerId).toBe('ig-container-1');
     expect(response.body.publishJob.platformPostId).toBe('ig-media-1');
+  });
+
+  it('creates a new retry job for the latest failed publish attempt', async () => {
+    const db = createMemoryDb();
+    const publishJobScheduler = jest.fn();
+    const app = createApp(db, jest.fn(), { publishJobScheduler });
+
+    db._collections.socialAccounts.set('social-1', {
+      userId: 'user-123',
+      platform: 'instagram',
+      status: 'active',
+      accessToken: encryptSecret('ig-access-token'),
+      tokenExpiresAt: new Date(Date.now() + (24 * 60 * 60 * 1000)),
+      scopes: ['instagram_basic', 'instagram_content_publish'],
+    });
+    db._collections.socialPublishJobs.set('publish-failed-1', {
+      userId: 'user-123',
+      storyId: 'story-1',
+      takeReportId: 'take-1',
+      takeResponseDocId: 'response-1',
+      socialAccountId: 'social-1',
+      platform: 'instagram',
+      publishMode: 'instagram_reel',
+      status: 'failed',
+      caption: 'Retry this Reel',
+      platformOptions: { shareToFeed: true },
+      mediaSnapshot: { videoGcsUrl: 'gs://bucket/take-1.mp4' },
+      lastError: {
+        code: 'instagram_fetch_failed',
+        message: 'Instagram could not fetch the video.',
+        retryable: true,
+      },
+      attemptCount: 1,
+      createdAt: new Date('2026-06-08T10:00:00.000Z'),
+      updatedAt: new Date('2026-06-08T10:05:00.000Z'),
+      completedAt: new Date('2026-06-08T10:05:00.000Z'),
+    });
+
+    const response = await request(app)
+      .post('/api/social/publishes/publish-failed-1/retry');
+
+    expect(response.status).toBe(202);
+    expect(response.body.ok).toBe(true);
+    expect(response.body.publishJob.retryOfPublishJobId).toBe('publish-failed-1');
+    expect(response.body.publishJob.platform).toBe('instagram');
+    expect(response.body.publishJob.status).toBe('queued');
+
+    const retryJobId = response.body.publishJob.publishJobId;
+    const retryJob = db._collections.socialPublishJobs.get(retryJobId);
+    expect(retryJob).toMatchObject({
+      userId: 'user-123',
+      storyId: 'story-1',
+      takeReportId: 'take-1',
+      socialAccountId: 'social-1',
+      platform: 'instagram',
+      publishMode: 'instagram_reel',
+      retryOfPublishJobId: 'publish-failed-1',
+    });
+    expect(db._collections.socialPublishJobs.get('publish-failed-1').supersededByPublishJobId).toBe(retryJobId);
+    expect(publishJobScheduler).toHaveBeenCalledWith(expect.objectContaining({
+      db,
+      publishJobId: retryJobId,
+    }));
+  });
+
+  it('rejects retry when the failed attempt is not the latest job for that take and platform', async () => {
+    const db = createMemoryDb();
+    const app = createApp(db, jest.fn(), {});
+
+    db._collections.socialAccounts.set('social-1', {
+      userId: 'user-123',
+      platform: 'tiktok',
+      status: 'active',
+      accessToken: encryptSecret('tt-access-token'),
+    });
+    db._collections.socialPublishJobs.set('publish-failed-older', {
+      userId: 'user-123',
+      storyId: 'story-1',
+      takeReportId: 'take-1',
+      socialAccountId: 'social-1',
+      platform: 'tiktok',
+      publishMode: 'tiktok_draft',
+      status: 'failed',
+      lastError: {
+        message: 'The first publish failed.',
+        retryable: true,
+      },
+      createdAt: new Date('2026-06-08T09:00:00.000Z'),
+      updatedAt: new Date('2026-06-08T09:01:00.000Z'),
+    });
+    db._collections.socialPublishJobs.set('publish-completed-newer', {
+      userId: 'user-123',
+      storyId: 'story-1',
+      takeReportId: 'take-1',
+      socialAccountId: 'social-1',
+      platform: 'tiktok',
+      publishMode: 'tiktok_draft',
+      status: 'awaiting_user_action',
+      createdAt: new Date('2026-06-08T10:00:00.000Z'),
+      updatedAt: new Date('2026-06-08T10:05:00.000Z'),
+    });
+
+    const response = await request(app)
+      .post('/api/social/publishes/publish-failed-older/retry');
+
+    expect(response.status).toBe(409);
+    expect(response.body.error).toBe('A newer publish attempt already exists for this take and platform');
+    expect(response.body.publishJob.publishJobId).toBe('publish-completed-newer');
+  });
+
+  it('rejects retry when the connected account no longer has required publish scopes', async () => {
+    const db = createMemoryDb();
+    const app = createApp(db, jest.fn(), {});
+
+    db._collections.socialAccounts.set('social-1', {
+      userId: 'user-123',
+      platform: 'instagram',
+      status: 'active',
+      accessToken: encryptSecret('ig-access-token'),
+      tokenExpiresAt: new Date(Date.now() + (24 * 60 * 60 * 1000)),
+      scopes: ['instagram_basic'],
+    });
+    db._collections.socialPublishJobs.set('publish-failed-1', {
+      userId: 'user-123',
+      storyId: 'story-1',
+      takeReportId: 'take-1',
+      socialAccountId: 'social-1',
+      platform: 'instagram',
+      publishMode: 'instagram_reel',
+      status: 'failed',
+      lastError: {
+        message: 'Instagram could not fetch the video.',
+        retryable: true,
+      },
+      createdAt: new Date('2026-06-08T09:00:00.000Z'),
+      updatedAt: new Date('2026-06-08T09:01:00.000Z'),
+      completedAt: new Date('2026-06-08T09:01:00.000Z'),
+    });
+
+    const response = await request(app)
+      .post('/api/social/publishes/publish-failed-1/retry');
+
+    expect(response.status).toBe(409);
+    expect(response.body.error).toBe('Reconnect this account to restore required publishing permissions');
+    expect(response.body.missingScopes).toEqual(['instagram_content_publish']);
   });
 });
