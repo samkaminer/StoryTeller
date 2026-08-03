@@ -58,6 +58,12 @@ resumeVideoRecording = videoFunctions.resumeVideoRecording;
 getVideoBlob = videoFunctions.getVideoBlob;
 isVideoAvailable = videoFunctions.isVideoAvailable;
 
+// Audio level monitoring state
+let audioContext = null;
+let analyserNode = null;
+let levelRafId = null;
+let peakLevelSeen = 0;
+
 // Initialize microphone and MediaRecorder
 export async function setupMicrophone() {
     if (state.audio.mediaRecorder) {
@@ -68,6 +74,7 @@ export async function setupMicrophone() {
     try {
         console.log('Requesting microphone access for setup/restore...');
         const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        state.audio.stream = stream;
         console.log('Microphone access granted');
         
         const mimeType = getMimeType();
@@ -215,8 +222,11 @@ export async function setupMicrophone() {
                 }
                 
                 if (!state.deepgram.accumulatedTranscript || state.deepgram.accumulatedTranscript.trim().length === 0) {
-                    console.warn('[Recording] No transcript captured during recording');
-                    showError("Having trouble hearing you. Please speak clearly and try again.");
+                    console.warn('[Recording] No transcript captured. Peak audio level seen:', peakLevelSeen);
+                    const msg = peakLevelSeen < 0.03
+                        ? "Microphone not picking up audio. On Mac, check System Settings → Privacy & Security → Microphone and make sure your browser is enabled."
+                        : "Having trouble hearing you. Please speak up, check your microphone, and try again.";
+                    showError(msg);
                     
                     // Reset UI state - MUST set thinking to false BEFORE calling resetRecordingState
                     state.ui.thinking = false;
@@ -257,6 +267,50 @@ export async function setupMicrophone() {
         }
         showError('Microphone access denied. Please allow microphone access and refresh.');
         return false;
+    }
+}
+
+// ── Audio level monitoring ────────────────────────────────────────────────────
+function startLevelMonitoring() {
+    if (!state.audio.stream) return;
+    peakLevelSeen = 0;
+    try {
+        audioContext = new (window.AudioContext || window.webkitAudioContext)();
+        const source = audioContext.createMediaStreamSource(state.audio.stream);
+        analyserNode = audioContext.createAnalyser();
+        analyserNode.fftSize = 256;
+        source.connect(analyserNode);
+        const dataArray = new Uint8Array(analyserNode.frequencyBinCount);
+        const indicator = document.getElementById('micLevelIndicator');
+
+        function tick() {
+            if (!analyserNode) return;
+            analyserNode.getByteFrequencyData(dataArray);
+            // RMS of frequency bins as a 0–1 level
+            const rms = Math.sqrt(dataArray.reduce((s, v) => s + v * v, 0) / dataArray.length) / 128;
+            if (rms > peakLevelSeen) peakLevelSeen = rms;
+            if (indicator) {
+                const bars = indicator.querySelectorAll('.mic-bar');
+                const thresholds = [0.04, 0.10, 0.18, 0.28, 0.40];
+                bars.forEach((bar, i) => {
+                    bar.classList.toggle('active', rms >= thresholds[i]);
+                });
+            }
+            levelRafId = requestAnimationFrame(tick);
+        }
+        tick();
+    } catch (e) {
+        console.warn('[AudioLevel] Could not start level monitoring:', e);
+    }
+}
+
+function stopLevelMonitoring() {
+    if (levelRafId) { cancelAnimationFrame(levelRafId); levelRafId = null; }
+    if (analyserNode) { analyserNode.disconnect(); analyserNode = null; }
+    if (audioContext) { audioContext.close().catch(() => {}); audioContext = null; }
+    const indicator = document.getElementById('micLevelIndicator');
+    if (indicator) {
+        indicator.querySelectorAll('.mic-bar').forEach(b => b.classList.remove('active'));
     }
 }
 
@@ -398,6 +452,7 @@ async function startRecording() {
         }
     }, 3000);
     
+    startLevelMonitoring();
     createInterimTranscriptDisplay();
 
     if (elements.pauseBtn) {
@@ -455,6 +510,7 @@ async function startRecording() {
 
 // Stop recording
 async function stopRecording() {
+    stopLevelMonitoring();
     console.log(`[STOP] stopRecording called at ${new Date().toISOString()}`);
     console.log(`[STOP] MediaRecorder state: ${state.audio.mediaRecorder.state}`);
     console.log(`[STOP] Deepgram stream active: ${state.deepgram.streamActive}`);

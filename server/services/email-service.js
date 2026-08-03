@@ -306,6 +306,32 @@ class EmailService {
     }
     
     /**
+     * Send story completion email with thumbnail + watch/archive links
+     */
+    static async sendStoryComplete(options) {
+        const { to, userName, thumbnailUrl, watchUrl, archiveUrl } = options;
+        const subject = 'Your story is ready to watch';
+        const thumbHtml = thumbnailUrl
+            ? `<div style="text-align:center;margin:1.5rem 0;"><img src="${thumbnailUrl}" style="width:140px;border-radius:12px;display:inline-block;" alt="Story thumbnail" /></div>`
+            : '';
+        const html = `
+            <div style="font-family:Arial,sans-serif;max-width:580px;margin:0 auto;background:#F3EDD8;padding:2.5rem 2rem;border-radius:16px;">
+                <h1 style="font-family:Georgia,serif;font-style:italic;font-size:1.75rem;font-weight:400;color:#1C1610;margin:0 0 0.75rem;">${userName ? `Hi ${userName},` : 'Your story is ready.'}</h1>
+                <p style="color:#7A6E5B;line-height:1.65;margin:0 0 1.5rem;">You've captured something real. Your final telling is ready to watch and share.</p>
+                ${thumbHtml}
+                <div style="text-align:center;margin:2rem 0;">
+                    <a href="${watchUrl}" style="display:inline-block;padding:0.875rem 2.25rem;background:#2C3C6A;color:#fff;text-decoration:none;border-radius:100px;font-size:1rem;font-weight:500;">Watch your story →</a>
+                </div>
+                <p style="text-align:center;margin-top:0.5rem;">
+                    <a href="${archiveUrl}" style="color:#7A6E5B;font-size:0.875rem;text-decoration:none;">View your story archive</a>
+                </p>
+                <p style="color:#7A6E5B;font-size:0.8125rem;margin-top:2.5rem;border-top:1px solid #D9D0B8;padding-top:1.25rem;">The StoryTeller team</p>
+            </div>
+        `;
+        return await this.send({ to, subject, html });
+    }
+
+    /**
      * Send admin notification email
      */
     static async sendAdminNotification(options) {

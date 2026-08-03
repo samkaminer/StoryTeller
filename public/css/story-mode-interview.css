@@ -1,0 +1,562 @@
+/*
+ * Story Mode Interview
+ * Parchment palette, D04-inspired desktop layout.
+ */
+
+:root {
+  --sm-bg:      #F3EDD8;
+  --sm-text:    #1C1610;
+  --sm-muted:   #7A6E5B;
+  --sm-border:  #D9D0B8;
+  --sm-ink:     #2C3C6A;
+  --sm-display: 'Playfair Display', Georgia, serif;
+  --sm-ui:      'Inter', system-ui, sans-serif;
+  --sm-nav:     64px;
+}
+
+/* ── Global parchment background ──────────────────────────── */
+html.story-mode body,
+html.story-mode .modern-interview-container,
+html.story-mode #fileUploadArea { background: var(--sm-bg) !important; }
+
+html.story-mode #fileUploadArea { display: none !important; }
+
+/* ── Calling / loading screens ───────────────────────────── */
+html.story-mode #initialCallingScreen,
+html.story-mode #interviewCallingOverlay {
+  background: var(--sm-bg) !important;
+}
+html.story-mode #initialCallingScreen .calling-status,
+html.story-mode #interviewCallingOverlay .calling-status {
+  font-family: var(--sm-display) !important;
+  font-style: italic !important;
+  font-weight: 400 !important;
+  font-size: 1.25rem !important;
+  color: var(--sm-text) !important;
+}
+html.story-mode .calling-dots span {
+  background: var(--sm-border) !important;
+  box-shadow: none !important;
+}
+html.story-mode .avatar-inner {
+  background: rgba(44,60,106,0.08) !important;
+  border-color: var(--sm-border) !important;
+  color: var(--sm-text) !important;
+}
+html.story-mode .avatar-ring { border-color: var(--sm-border) !important; }
+
+/* ── Interview layout ────────────────────────────────────── */
+html.story-mode .interview-content {
+  background: transparent !important;
+}
+
+/* ── Remove frosted glass from controls bar ─────────────── */
+html.story-mode .video-enabled .recording-controls-inner {
+  background: none !important;
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+  border: none !important;
+}
+
+/* ── Mobile chyron gradient (parchment fade) ─────────────── */
+html.story-mode .question-area-video-chyron,
+html.story-mode .video-enabled .question-area-video-chyron {
+  background: linear-gradient(
+    to bottom,
+    rgba(243,237,216,0.0) 0%,
+    rgba(243,237,216,0.85) 28%,
+    rgba(243,237,216,0.97) 100%
+  ) !important;
+  padding: 0 1.375rem !important;
+}
+
+/* ── Question text ───────────────────────────────────────── */
+html.story-mode .question-display-chyron,
+html.story-mode #currentQuestionDisplayVideo,
+html.story-mode #currentQuestionDisplay,
+html.story-mode .question-display {
+  font-family: var(--sm-display) !important;
+  font-size: clamp(1.5rem, 5vw, 1.875rem) !important;
+  font-weight: 700 !important;
+  font-style: italic !important;
+  color: var(--sm-text) !important;
+  line-height: 1.3 !important;
+  text-align: left !important;
+  text-shadow: none !important;
+  background: none !important;
+  border: none !important;
+  box-shadow: none !important;
+  padding: 0 0 0.375rem !important;
+  margin: 0 !important;
+}
+
+/* ── Timer: mobile top-left with red dot ────────────────── */
+html.story-mode .circular-time-counter {
+  position: fixed !important;
+  top: 1.125rem !important;
+  left: 1.375rem !important;
+  z-index: 200 !important;
+  background: none !important;
+  margin: 0 !important;
+  display: flex !important;
+  align-items: center !important;
+  gap: 0.375rem !important;
+}
+html.story-mode .circular-time-counter::before {
+  content: '●';
+  color: #c0392b;
+  font-size: 0.625rem;
+  line-height: 1;
+}
+html.story-mode .time-display,
+html.story-mode .circular-time-counter .time-display {
+  font-family: var(--sm-ui) !important;
+  font-size: 0.8125rem !important;
+  font-weight: 400 !important;
+  color: var(--sm-text) !important;
+  background: none !important;
+  border: none !important;
+}
+
+/* ── Progress ring: parchment palette ────────────────────── */
+html.story-mode .circular-progress .progress-bg   { stroke: var(--sm-border) !important; }
+html.story-mode .circular-progress .progress-fill { stroke: var(--sm-ink) !important; }
+html.story-mode .video-enabled .circular-progress .progress-bg   { stroke: var(--sm-border) !important; }
+html.story-mode .video-enabled .circular-progress .progress-fill { stroke: var(--sm-ink) !important; }
+
+/* ── Record button: navy on parchment ────────────────────── */
+html.story-mode .modern-record-btn {
+  background: var(--sm-ink) !important;
+  border-color: var(--sm-ink) !important;
+  color: #fff !important;
+  box-shadow: none !important;
+}
+html.story-mode .modern-record-btn:hover {
+  background: rgba(44,60,106,0.85) !important;
+}
+html.story-mode .modern-record-btn .mic-icon,
+html.story-mode .modern-record-btn .stop-icon { color: #fff !important; stroke: #fff !important; }
+
+/* ── Hide mic bars (we use a clone in right panel on desktop) */
+html.story-mode .mic-level-indicator { display: none !important; }
+html.story-mode #pauseBtn            { display: none !important; }
+
+/* ── Hide keyboard hints ─────────────────────────────────── */
+html.story-mode .keyboard-hints,
+html.story-mode .hint-item,
+html.story-mode .recording-status-area .modern-recording-status {
+  display: none !important;
+}
+
+/* ── "speak freely" divider ──────────────────────────────── */
+html.story-mode .story-speak-divider {
+  display: flex !important;
+  align-items: center !important;
+  gap: 0.75rem !important;
+  width: 100% !important;
+  margin: 0.5rem 0 0.875rem !important;
+}
+html.story-mode .story-speak-line {
+  flex: 1; height: 1px; background: var(--sm-border); display: block;
+}
+html.story-mode .story-speak-text {
+  font-family: var(--sm-ui) !important;
+  font-size: 0.8125rem !important;
+  color: var(--sm-muted) !important;
+  letter-spacing: 0.025em !important;
+  flex-shrink: 0;
+}
+
+/* ── "I'm done telling my story" ghost pill ──────────────── */
+html.story-mode #storyDoneBtn {
+  display: inline-block !important;
+  padding: 0.625rem 1.25rem !important;
+  background: transparent !important;
+  color: var(--sm-text) !important;
+  border: 1.5px solid var(--sm-border) !important;
+  border-radius: 100px !important;
+  font-family: var(--sm-ui) !important;
+  font-size: 0.875rem !important;
+  font-weight: 400 !important;
+  cursor: pointer !important;
+  transition: border-color 0.15s, color 0.15s !important;
+  white-space: nowrap !important;
+  -webkit-tap-highlight-color: transparent !important;
+}
+html.story-mode #storyDoneBtn:hover {
+  border-color: var(--sm-ink) !important;
+  color: var(--sm-ink) !important;
+}
+html.story-mode #storyDoneBtn.dimmed {
+  opacity: 0.35 !important;
+  pointer-events: none !important;
+}
+
+/* Mobile full-width done button */
+html.story-mode .sm-done-mobile {
+  display: block !important;
+  width: 100% !important;
+  max-width: 320px !important;
+  margin: 0 auto 1rem !important;
+  text-align: center !important;
+}
+
+/* ── Always-present exit icon (bottom-right) ─────────────── */
+html.story-mode #smExitBtn {
+  position: fixed !important;
+  bottom: 1.75rem !important;
+  right: 2rem !important;
+  z-index: 700 !important;
+  display: flex !important;
+  align-items: center !important;
+  gap: 0.4rem !important;
+  padding: 0.45rem 0.875rem 0.45rem 0.75rem !important;
+  background: var(--sm-bg) !important;
+  border: 1.5px solid var(--sm-muted) !important;
+  border-radius: 100px !important;
+  color: var(--sm-muted) !important;
+  font-family: var(--sm-ui) !important;
+  font-size: 0.75rem !important;
+  letter-spacing: 0.02em !important;
+  cursor: pointer !important;
+  box-shadow: 0 2px 12px rgba(28,22,16,0.10) !important;
+  transition: border-color 0.15s, color 0.15s, box-shadow 0.15s !important;
+}
+html.story-mode #smExitBtn:hover {
+  border-color: var(--sm-ink) !important;
+  color: var(--sm-ink) !important;
+  box-shadow: 0 2px 16px rgba(28,22,16,0.16) !important;
+}
+html.story-mode #smExitBtn[data-tooltip]::before {
+  content: attr(data-tooltip);
+  position: absolute;
+  bottom: calc(100% + 8px);
+  right: 0;
+  background: var(--sm-text);
+  color: var(--sm-bg);
+  font-family: var(--sm-ui);
+  font-size: 0.75rem;
+  white-space: nowrap;
+  padding: 0.375rem 0.75rem;
+  border-radius: 6px;
+  pointer-events: none;
+}
+
+/* ── Completion banner (appears when interview is done) ───── */
+html.story-mode #smCompletionBanner {
+  position: fixed !important;
+  bottom: 5rem !important;
+  right: 2rem !important;
+  z-index: 700 !important;
+  background: var(--sm-bg) !important;
+  border: 1.5px solid var(--sm-border) !important;
+  border-radius: 16px !important;
+  padding: 1.5rem 1.5rem 1.25rem !important;
+  max-width: 260px !important;
+  box-shadow: 0 4px 32px rgba(28,22,16,0.12) !important;
+  animation: smBannerIn 0.35s cubic-bezier(0.22,1,0.36,1) both !important;
+}
+@keyframes smBannerIn {
+  from { opacity: 0; transform: translateY(12px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+html.story-mode #smCompletionBanner .sm-banner-heading {
+  font-family: var(--sm-display) !important;
+  font-style: italic !important;
+  font-size: 1.0625rem !important;
+  font-weight: 700 !important;
+  color: var(--sm-text) !important;
+  line-height: 1.3 !important;
+  margin-bottom: 0.5rem !important;
+}
+html.story-mode #smCompletionBanner .sm-banner-sub {
+  font-family: var(--sm-ui) !important;
+  font-size: 0.8125rem !important;
+  color: var(--sm-muted) !important;
+  line-height: 1.5 !important;
+  margin-bottom: 1.25rem !important;
+}
+html.story-mode #smCompletionBtn {
+  width: 100% !important;
+  padding: 0.75rem 1rem !important;
+  background: var(--sm-ink) !important;
+  color: #fff !important;
+  border: none !important;
+  border-radius: 100px !important;
+  font-family: var(--sm-ui) !important;
+  font-size: 0.875rem !important;
+  font-weight: 500 !important;
+  cursor: pointer !important;
+  transition: opacity 0.15s !important;
+  text-align: center !important;
+}
+html.story-mode #smCompletionBtn:hover { opacity: 0.88 !important; }
+
+/* ── Error message ───────────────────────────────────────── */
+html.story-mode .modern-error-message {
+  color: #b83232 !important;
+  font-family: var(--sm-ui) !important;
+  font-size: 0.875rem !important;
+  text-align: center !important;
+}
+
+/* ── Pause button ────────────────────────────────────────── */
+html.story-mode .modern-pause-btn {
+  background: rgba(44,60,106,0.08) !important;
+  color: var(--sm-text) !important;
+  border-color: var(--sm-border) !important;
+}
+
+/* ── Completion screen ───────────────────────────────────── */
+html.story-mode #emailNotificationMessage {
+  background: rgba(243,237,216,0.97) !important;
+}
+html.story-mode #emailNotificationMessage h2 {
+  font-family: var(--sm-display) !important;
+  color: var(--sm-text) !important;
+  font-weight: 400 !important;
+  font-style: italic !important;
+}
+html.story-mode #emailNotificationMessage p {
+  color: var(--sm-muted) !important;
+}
+html.story-mode #emailNotificationMessage .primary-button {
+  background: var(--sm-ink) !important;
+  color: #ffffff !important;
+  border-radius: 100px !important;
+}
+
+/* ── Thinking panel ──────────────────────────────────────── */
+html.story-mode .thinking-trace-content,
+html.story-mode #thinkingTraceDisplay {
+  background: rgba(243,237,216,0.96) !important;
+  color: var(--sm-text) !important;
+  border-color: var(--sm-border) !important;
+}
+
+/* ── Progress ring ───────────────────────────────────────── */
+html.story-mode .progress-fill { stroke: var(--sm-ink) !important; }
+html.story-mode .progress-bg   { stroke: var(--sm-border) !important; }
+
+/* ─────────────────────────────────────────────────────────── */
+/* ── DESKTOP: D04 three-column layout ────────────────────── */
+/* ─────────────────────────────────────────────────────────── */
+@media (min-width: 900px) {
+
+  /* Injected top nav */
+  html.story-mode #smDesktopNav {
+    position: fixed !important;
+    top: 0 !important; left: 0 !important; right: 0 !important;
+    height: var(--sm-nav) !important;
+    background: var(--sm-bg) !important;
+    border-bottom: 1px solid var(--sm-border) !important;
+    display: flex !important;
+    align-items: center !important;
+    justify-content: space-between !important;
+    padding: 0 2rem !important;
+    z-index: 400 !important;
+  }
+  html.story-mode #smNavWordmark {
+    font-family: var(--sm-display) !important;
+    font-size: 1.125rem !important;
+    font-weight: 700 !important;
+    font-style: italic !important;
+    color: var(--sm-text) !important;
+    letter-spacing: -0.01em !important;
+    text-decoration: none !important;
+  }
+  html.story-mode #smNavCenter {
+    display: flex !important;
+    align-items: center !important;
+    gap: 0.5rem !important;
+  }
+  /* Red dot before timer in nav */
+  html.story-mode #smNavCenter .circular-time-counter::before {
+    content: '●';
+    color: #c0392b;
+    font-size: 0.5rem;
+  }
+
+  /* ── Left sidebar: recording controls repurposed ── */
+  html.story-mode .video-enabled .modern-recording-controls {
+    top: var(--sm-nav) !important;
+    bottom: 0 !important;
+    left: 0 !important;
+    right: auto !important;
+    width: 30% !important;
+    max-width: 360px !important;
+    padding: 2.5rem 2.5rem 2.5rem 2.5rem !important;
+    background: var(--sm-bg) !important;
+    border-right: 1px solid var(--sm-border) !important;
+    display: flex !important;
+    flex-direction: column !important;
+    justify-content: center !important;
+  }
+
+  html.story-mode .video-enabled .recording-controls-inner {
+    display: block !important;
+    padding: 0 !important;
+    max-width: none !important;
+    margin: 0 !important;
+  }
+
+  /* "CURRENT QUESTION" label above question text */
+  html.story-mode .video-enabled .question-area-video-chyron {
+    background: none !important;
+    padding: 0 !important;
+    grid-column: unset !important;
+    position: static !important;
+    bottom: auto !important;
+    display: block !important;
+  }
+  html.story-mode .video-enabled .question-area-video-chyron::before {
+    content: 'CURRENT QUESTION';
+    display: block;
+    font-family: 'Inter', system-ui, sans-serif;
+    font-size: 0.6875rem;
+    font-weight: 500;
+    letter-spacing: 0.1em;
+    color: var(--sm-ink);
+    opacity: 0.55;
+    margin-bottom: 0.875rem;
+  }
+  html.story-mode .video-enabled .question-display-chyron,
+  html.story-mode .video-enabled #currentQuestionDisplayVideo {
+    font-size: clamp(1.375rem, 2.25vw, 2rem) !important;
+  }
+
+  /* Record button + progress ring in left sidebar */
+  html.story-mode .video-enabled .recording-visual-feedback {
+    display: flex !important;
+    flex-direction: column !important;
+    align-items: flex-start !important;
+    margin-top: 2rem !important;
+    gap: 0.5rem !important;
+  }
+  html.story-mode .video-enabled .circular-progress-wrapper {
+    display: inline-block !important;
+  }
+
+  /* Recording status area visible in left sidebar */
+  html.story-mode .video-enabled .recording-status-area {
+    display: block !important;
+    margin-top: 1rem !important;
+  }
+
+  /* Timer: reset to normal flow in sidebar (JS moves it into nav center) */
+  html.story-mode .circular-time-counter {
+    position: static !important;
+    top: auto !important;
+    left: auto !important;
+    margin: 0 !important;
+  }
+  /* Nav center inherits the timer element — show its red dot via the nav wrapper */
+  html.story-mode #smNavCenter .circular-time-counter::before {
+    content: '●';
+    color: #c0392b;
+    font-size: 0.5rem;
+    line-height: 1;
+    margin-right: 0.25rem;
+  }
+
+  /* ── Center: interview-content with video ── */
+  html.story-mode .video-enabled .interview-content {
+    margin-left: 30% !important;
+    margin-right: 30% !important;
+    padding-top: var(--sm-nav) !important;
+    padding-bottom: 0 !important;
+    display: flex !important;
+    flex-direction: column !important;
+    align-items: center !important;
+    justify-content: center !important;
+    min-height: 100vh !important;
+    background: var(--sm-bg) !important;
+  }
+
+  /* Video: full center column height */
+  html.story-mode .video-enabled #videoPreviewContainer {
+    position: relative !important;
+    width: 100% !important;
+    height: calc(100vh - var(--sm-nav)) !important;
+    display: flex !important;
+    align-items: center !important;
+    justify-content: center !important;
+    overflow: hidden !important;
+  }
+  html.story-mode .video-enabled #videoPreview {
+    width: 100% !important;
+    height: 100% !important;
+    object-fit: cover !important;
+    border-radius: 0 !important;
+  }
+
+  /* Corner brackets on video */
+  html.story-mode .video-enabled #videoPreviewContainer::before,
+  html.story-mode .video-enabled #videoPreviewContainer::after {
+    content: '' !important;
+    position: absolute !important;
+    width: 28px !important;
+    height: 28px !important;
+    z-index: 10 !important;
+    border-color: var(--sm-ink) !important;
+    border-style: solid !important;
+    opacity: 0.4 !important;
+    pointer-events: none !important;
+  }
+  html.story-mode .video-enabled #videoPreviewContainer::before {
+    top: 14px !important; left: 14px !important;
+    border-width: 2px 0 0 2px !important;
+  }
+  html.story-mode .video-enabled #videoPreviewContainer::after {
+    bottom: 14px !important; right: 14px !important;
+    border-width: 0 2px 2px 0 !important;
+  }
+
+  /* Hide question-area (non-video mode) on desktop */
+  html.story-mode .video-enabled #currentQuestionArea { display: none !important; }
+
+  /* ── Right panel (injected by JS) ── */
+  html.story-mode #smRightPanel {
+    position: fixed !important;
+    top: var(--sm-nav) !important;
+    right: 0 !important;
+    bottom: 0 !important;
+    width: 30% !important;
+    max-width: 360px !important;
+    background: var(--sm-bg) !important;
+    border-left: 1px solid var(--sm-border) !important;
+    display: flex !important;
+    flex-direction: column !important;
+    align-items: flex-start !important;
+    justify-content: center !important;
+    padding: 2.5rem !important;
+  }
+  html.story-mode #smRightPanel .sm-coaching-text {
+    font-family: var(--sm-display) !important;
+    font-style: italic !important;
+    font-size: 1.0625rem !important;
+    color: var(--sm-muted) !important;
+    line-height: 1.65 !important;
+  }
+
+  /* Mic bars: show in right panel as waveform decoration */
+  html.story-mode #smRightPanel .mic-level-indicator {
+    display: flex !important;
+    gap: 3px !important;
+    margin-bottom: 1.25rem !important;
+    align-items: flex-end !important;
+    height: 40px !important;
+  }
+  html.story-mode #smRightPanel .mic-bar {
+    width: 4px !important;
+    min-height: 4px !important;
+    border-radius: 2px !important;
+    background: var(--sm-border) !important;
+  }
+  html.story-mode #smRightPanel .mic-bar.active {
+    background: var(--sm-ink) !important;
+  }
+
+  /* Desktop done btn: in nav, hide mobile version */
+  html.story-mode .sm-done-mobile { display: none !important; }
+}

@@ -1,6 +1,8 @@
 const request = require('supertest');
 const { createTestApp, closeTestServer, clearAllMocks } = require('../../test-factory');
 
+const AUTH_HEADER = { Authorization: 'Bearer test-token' };
+
 describe('Claude API Endpoint', () => {
   let app, server;
 
@@ -22,6 +24,7 @@ describe('Claude API Endpoint', () => {
     it('should require messages in request body', async () => {
       const response = await request(app)
         .post('/api/claude')
+        .set(AUTH_HEADER)
         .send({})
         .expect(400);
 
@@ -35,9 +38,10 @@ describe('Claude API Endpoint', () => {
 
       const response = await request(app)
         .post('/api/claude')
-        .send({ 
+        .set(AUTH_HEADER)
+        .send({
           messages: mockMessages,
-          stream: false 
+          stream: false
         })
         .expect(200);
 
@@ -52,9 +56,10 @@ describe('Claude API Endpoint', () => {
 
       const response = await request(app)
         .post('/api/claude')
-        .send({ 
+        .set(AUTH_HEADER)
+        .send({
           messages: mockMessages,
-          stream: true 
+          stream: true
         })
         .expect(200);
 
@@ -74,7 +79,8 @@ describe('Claude API Endpoint', () => {
 
       const response = await request(app)
         .post('/api/claude')
-        .send({ 
+        .set(AUTH_HEADER)
+        .send({
           messages: [{ role: 'user', content: 'Hello' }],
           userId: 'test-user',
           sessionId: 'test-session'
@@ -96,7 +102,8 @@ describe('Claude API Endpoint', () => {
 
       const response = await request(app)
         .post('/api/claude')
-        .send({ 
+        .set(AUTH_HEADER)
+        .send({
           messages: [{ role: 'user', content: 'Hello' }],
           userId: 'test-user',
           sessionId: 'test-session',
@@ -112,9 +119,9 @@ describe('Claude API Endpoint', () => {
       // For now, we'll test the error handling structure
       const response = await request(app)
         .post('/api/claude')
-        .send({ 
+        .set(AUTH_HEADER)
+        .send({
           messages: [{ role: 'user', content: 'Test error handling' }],
-          // Send invalid model to trigger error
           model: 'invalid-model'
         });
 

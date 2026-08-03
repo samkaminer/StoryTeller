@@ -375,11 +375,33 @@ const mediaUpload = multer({
       'audio/mp4',
       'video/mp4',
       'audio/mpeg',
-      'audio/wav'
+      'audio/wav',
+      'audio/ogg',
+      'video/ogg',
+      'application/octet-stream'
     ];
-    if (allowedTypes.includes(file.mimetype) || file.mimetype.startsWith('audio/') || file.mimetype.startsWith('video/')) {
+
+    const mimeType = typeof file.mimetype === 'string' ? file.mimetype : '';
+    const originalName = typeof file.originalname === 'string' ? file.originalname.toLowerCase() : '';
+    const fieldName = typeof file.fieldname === 'string' ? file.fieldname : '';
+    const hasMediaExtension = /\.(webm|mp4|m4a|mp3|wav|ogg)$/i.test(originalName);
+    const isKnownMediaField = fieldName === 'audio' || fieldName === 'video';
+
+    if (
+      allowedTypes.includes(mimeType) ||
+      mimeType.startsWith('audio/') ||
+      mimeType.startsWith('video/') ||
+      (isKnownMediaField && hasMediaExtension) ||
+      (isKnownMediaField && !mimeType)
+    ) {
       cb(null, true);
     } else {
+      console.error('[Media Upload] Rejected file by filter:', {
+        fieldname: file.fieldname,
+        originalname: file.originalname,
+        mimetype: file.mimetype,
+        size: file.size
+      });
       cb(new Error('Invalid file type. Only audio and video files are allowed.'));
     }
   }
@@ -627,6 +649,11 @@ app.use('/api/', rateLimiters.api);
 app.use('/api/gmail', require('./server/routes/gmail-oauth'));
 app.use('/api/campaigns', require('./server/routes/campaigns'));
 app.use('/api/context-strings', require('./server/routes/context-strings'));
+app.use('/api/social', require('./server/routes/social').createRouter({
+  storage,
+  bucketName: GCS_BUCKET_NAME,
+}));
+app.use('/api/stories', require('./server/routes/stories').createRouter(storage, GCS_BUCKET_NAME));
 
 // Initialize email service
 const EmailService = require('./server/services/email-service');
@@ -779,13 +806,16 @@ if (SENDGRID_API_KEY) {
     console.warn('SENDGRID_API_KEY not found. Email will use Gmail if configured per user.');
 }
 
-if (!CLAUDE_API_KEY || !OPENAI_API_KEY || !DEEPGRAM_API_KEY || DEEPGRAM_API_KEY === "YOUR_DEEPGRAM_API_KEY_HERE") {
-    console.error('Missing required API keys. Please set CLAUDE_API_KEY, OPENAI_API_KEY, and DEEPGRAM_API_KEY environment variables.');
+if (!CLAUDE_API_KEY || !OPENAI_API_KEY) {
+    console.error('Missing required API keys. Please set CLAUDE_API_KEY and OPENAI_API_KEY environment variables.');
     process.exit(1);
 }
+if (!DEEPGRAM_API_KEY || DEEPGRAM_API_KEY === "YOUR_DEEPGRAM_API_KEY_HERE") {
+    console.warn('DEEPGRAM_API_KEY not set - voice/speech features will be disabled.');
+}
 
-// Initialize Deepgram client
-const deepgramClient = createClient(DEEPGRAM_API_KEY); // Updated initialization
+// Initialize Deepgram client (optional - only if key is set)
+const deepgramClient = DEEPGRAM_API_KEY ? createClient(DEEPGRAM_API_KEY) : null;
 
 // Store interview data at server level for persistence across socket connections
 const sessionData = new Map(); // Using Map to store session-specific data
@@ -859,6 +889,34 @@ Respond with only the question and nothing else.`;
 function countWords(text) {
     if (!text || typeof text !== 'string') return 0;
     return text.trim().split(/\s+/).filter(Boolean).length;
+}
+
+// Assembles a transcript string from Deepgram word objects, inserting [pause] and
+// [long pause] markers wherever the gap between adjacent words exceeds a threshold.
+// This gives Claude visibility into meaningful silences — a pause before a word signals
+// weight; clustered pauses signal a lull; a long pause after charged content signals
+// emotional labor.
+function assembleTranscriptWithPauses(words) {
+    if (!words || words.length === 0) return '';
+
+    const PAUSE_THRESHOLD = 1.5;       // seconds — meaningful conversational pause
+    const LONG_PAUSE_THRESHOLD = 2.5;  // seconds — emotional or significant pause
+
+    let transcript = words[0].punctuated_word || words[0].word || '';
+
+    for (let i = 1; i < words.length; i++) {
+        const gap = words[i].start - words[i - 1].end;
+
+        if (gap >= LONG_PAUSE_THRESHOLD) {
+            transcript += ' [long pause]';
+        } else if (gap >= PAUSE_THRESHOLD) {
+            transcript += ' [pause]';
+        }
+
+        transcript += ' ' + (words[i].punctuated_word || words[i].word || '');
+    }
+
+    return transcript;
 }
 
 // --- START Example Data ---
@@ -2722,6 +2780,8 @@ ${interview.content || 'No content available'}`
         sessionData.get(sessionId).enableMemoryService = data.enableMemoryService !== undefined ? data.enableMemoryService : true; // STORE memory service flag, default true
         sessionData.get(sessionId).followupModel = data.followupModel || 'claude-sonnet-4-6'; // STORE followup model, default to Claude Sonnet 4
         sessionData.get(sessionId).enableVideoRecording = data.enableVideoRecording !== undefined ? data.enableVideoRecording : false; // STORE video recording flag, default false
+        if (data.storyId) sessionData.get(sessionId).storyId = data.storyId; // Story mode session ID
+        if (data.mode) sessionData.get(sessionId).mode = data.mode;
 
         // DEBUG: Log what we're actually storing
         console.log('=== DEBUGGING SESSION SETTINGS ===');
@@ -2757,7 +2817,8 @@ ${interview.content || 'No content available'}`
                     total_recording_duration: 0, // Ensure this field is for recording duration
                     report_title: sessionData.get(sessionId).reportHeader || sessionData.get(sessionId).interviewTitle || null, // Use headers or title if available
                     report_subtitle: sessionData.get(sessionId).reportSubheader || sessionData.get(sessionId).interviewDescription || null, // Use subheaders or description if available
-                    utm_params: sessionData.get(sessionId).utmParams || null // Store UTM tracking parameters
+                    utm_params: sessionData.get(sessionId).utmParams || null, // Store UTM tracking parameters
+                    story_id: sessionData.get(sessionId).storyId || null // Story mode association (null for regular interviews)
                 };
                 await reportDocRef.set(initialReportData);
                 console.log(`[${sessionId}] Initial report document created in Firestore with ID: ${persistentSessionId}`);
@@ -2824,11 +2885,53 @@ ${interview.content || 'No content available'}`
     socket.on('stopInterview', async () => {
         // Store the sessionId in a cookie to retrieve it on the report page
         socket.emit('storeSessionId', sessionId);
-        
+
         // Get session info to pass the persistent session ID as report ID
         const sessionInfo = sessionData.get(sessionId);
         const reportId = sessionInfo?.persistentSessionId;
         const interviewId = sessionInfo?.interviewId;
+
+        // ── Story mode: skip Prompter report generation and redirect to story.html ──
+        const isStoryMode = interviewId === 'story-template-v1';
+        if (isStoryMode) {
+            const storyId = sessionInfo?.storyId || null;
+
+            // Save transcript to Firestore story document
+            if (storyId && db) {
+                try {
+                    const questions = (sessionInfo?.assistantQuestions || []).map(q => typeof q === 'string' ? q : (q.text || q.question || JSON.stringify(q)));
+                    const responses = sessionInfo?.interviewResponses || [];
+                    const transcript = [];
+                    const maxLen = Math.max(questions.length, responses.length);
+                    for (let i = 0; i < maxLen; i++) {
+                        if (questions[i]) transcript.push({ role: 'interviewer', text: questions[i] });
+                        if (responses[i]) transcript.push({ role: 'user', text: responses[i] });
+                    }
+                    await db.collection('stories').doc(storyId).update({
+                        status: 'review',
+                        transcript,
+                        completedAt: admin.firestore.FieldValue.serverTimestamp(),
+                        interviewReportId: sessionInfo?.persistentSessionId || null,
+                    });
+                    console.log(`[${sessionId}] Story transcript saved to Firestore for storyId: ${storyId}`);
+                } catch (err) {
+                    console.error(`[${sessionId}] Failed to save story transcript:`, err.message);
+                }
+            }
+
+            const redirectUrl = '/story-notes.html' + (storyId ? '?storyId=' + encodeURIComponent(storyId) : '');
+            socket.emit('redirectToReport', { storyMode: true, redirectUrl });
+            // Clean up Deepgram if active
+            if (sessionInfo?.deepgramSocket) {
+                sessionInfo.deepgramSocket.finish();
+                sessionInfo.deepgramSocket = null;
+                if (sessionInfo.keepAliveInterval) {
+                    clearInterval(sessionInfo.keepAliveInterval);
+                    sessionInfo.keepAliveInterval = null;
+                }
+            }
+            return;
+        }
         
         // For testing: if no responses, add minimal test data
         if (sessionInfo && (!sessionInfo.interviewResponses || sessionInfo.interviewResponses.length === 0)) {
@@ -2932,6 +3035,184 @@ ${interview.content || 'No content available'}`
                 sessionInfo.keepAliveInterval = null;
             }
         }
+    });
+
+    socket.on('endStory', async () => {
+        const sessionInfo = sessionData.get(sessionId);
+        const storyId = sessionInfo?.storyId;
+
+        // Deepgram teardown
+        if (sessionInfo?.deepgramSocket) {
+            console.log(`[${sessionId}] endStory: Closing Deepgram socket.`);
+            sessionInfo.deepgramSocket.finish();
+            sessionInfo.deepgramSocket = null;
+            if (sessionInfo.keepAliveInterval) {
+                clearInterval(sessionInfo.keepAliveInterval);
+                sessionInfo.keepAliveInterval = null;
+            }
+        }
+
+        // Save transcript and set status to 'analyzing'
+        if (storyId && db) {
+            try {
+                const questions = (sessionInfo?.assistantQuestions || []).map(q =>
+                    typeof q === 'string' ? q : (q.text || q.question || JSON.stringify(q))
+                );
+                const responses = sessionInfo?.interviewResponses || [];
+                const transcript = [];
+                const maxLen = Math.max(questions.length, responses.length);
+                for (let i = 0; i < maxLen; i++) {
+                    if (questions[i]) transcript.push({ role: 'interviewer', text: questions[i] });
+                    if (responses[i]) transcript.push({ role: 'user', text: responses[i] });
+                }
+                await db.collection('stories').doc(storyId).update({
+                    status: 'analyzing',
+                    transcript,
+                    completedAt: admin.firestore.FieldValue.serverTimestamp(),
+                    interviewReportId: sessionInfo?.persistentSessionId || null,
+                });
+                console.log(`[${sessionId}] endStory: Transcript saved for storyId: ${storyId}`);
+            } catch (err) {
+                console.error(`[${sessionId}] endStory: Failed to save transcript:`, err.message);
+            }
+        }
+
+        // Redirect immediately — story-notes.html polls Firestore while analysis runs
+        socket.emit('redirectToReport', {
+            storyMode: true,
+            redirectUrl: '/story-notes.html' + (storyId ? '?storyId=' + encodeURIComponent(storyId) : '')
+        });
+
+        // Analysis runs in background after redirect
+        try {
+            const storyAnalysis = require('./server/utils/storyAnalysis');
+            storyAnalysis.generateStoryAnalysis(sessionId, storyId, sessionInfo, db, admin)
+                .catch(err => console.error(`[${sessionId}] endStory analysis error:`, err.message));
+        } catch (err) {
+            console.error(`[${sessionId}] endStory: Could not load storyAnalysis module:`, err.message);
+        }
+    });
+
+    socket.on('startFinalTelling', async ({ storyId } = {}) => {
+        if (!storyId) {
+            socket.emit('finalTellingError', { message: 'Missing storyId' });
+            return;
+        }
+
+        const finalReportId = uuidv4();
+        const finalResponseDocId = uuidv4();
+
+        sessionData.set(sessionId, {
+            persistentSessionId: finalReportId,
+            storyId,
+            mode: 'final_telling',
+            finalResponseDocId,
+            currentTranscription: '',
+            currentWordTimestamps: [],
+            interviewResponses: [],
+            assistantQuestions: [],
+            totalRecordingDuration: 0,
+            enableWebSearch: false,
+            enableThinking: false,
+            enableMemoryService: false,
+            interviewId: null,
+        });
+
+        let interviewId = null;
+
+        if (db) {
+            try {
+                const storyDoc = await db.collection('stories').doc(storyId).get();
+                if (storyDoc.exists) {
+                    const interviewReportId = storyDoc.data().interviewReportId;
+                    if (interviewReportId) {
+                        const reportDoc = await db.collection('reports').doc(interviewReportId).get();
+                        if (reportDoc.exists) interviewId = reportDoc.data().interview_id || null;
+                    }
+                }
+            } catch (err) {
+                console.error(`[${sessionId}] startFinalTelling: DB lookup error:`, err.message);
+            }
+
+            try {
+                await db.collection('reports').doc(finalReportId).set({
+                    persistent_session_id: finalReportId,
+                    socket_session_id: sessionId,
+                    interview_id: interviewId,
+                    story_id: storyId,
+                    report_type: 'final_telling',
+                    take_response_doc_id: finalResponseDocId,
+                    take_media_status: 'recording',
+                    take_video_gcs_url: null,
+                    take_audio_gcs_url: null,
+                    take_thumbnail_gcs_url: null,
+                    take_media_processed_at: null,
+                    take_media_processing_error: null,
+                    take_media_processing_failed_at: null,
+                    status: 'recording',
+                    start_timestamp: admin.firestore.FieldValue.serverTimestamp(),
+                    total_recording_duration: 0,
+                });
+                await db.collection('reports').doc(finalReportId)
+                    .collection('responses').doc(finalResponseDocId).set({
+                        response_id: finalResponseDocId,
+                        persistent_session_id: finalReportId,
+                        interview_id: interviewId,
+                        story_id: storyId,
+                        question: 'Final Telling',
+                        answer: null,
+                        word_timestamps: null,
+                        timestamp: admin.firestore.FieldValue.serverTimestamp(),
+                    });
+            } catch (err) {
+                console.error(`[${sessionId}] startFinalTelling: Firestore write error:`, err.message);
+            }
+        }
+
+        sessionData.get(sessionId).interviewId = interviewId;
+        console.log(`[${sessionId}] startFinalTelling ready: reportId=${finalReportId}, interviewId=${interviewId}`);
+        socket.emit('finalTellingReady', { reportId: finalReportId, responseDocId: finalResponseDocId, interviewId });
+    });
+
+    socket.on('stopFinalTelling', async () => {
+        const sessionInfo = sessionData.get(sessionId);
+        if (!sessionInfo || sessionInfo.mode !== 'final_telling') return;
+
+        const { storyId, persistentSessionId: finalReportId, finalResponseDocId } = sessionInfo;
+        const wordTimestamps = sessionInfo.currentWordTimestamps || [];
+        const rawTranscription = (sessionInfo.currentTranscription || '').trim();
+        const finalTranscript = wordTimestamps.length > 0
+            ? assembleTranscriptWithPauses(wordTimestamps)
+            : rawTranscription;
+
+        if (db) {
+            try {
+                if (finalTranscript || wordTimestamps.length > 0) {
+                    await db.collection('reports').doc(finalReportId)
+                        .collection('responses').doc(finalResponseDocId)
+                        .update({ answer: finalTranscript, word_timestamps: wordTimestamps });
+                }
+                await db.collection('reports').doc(finalReportId).update({
+                    status: 'awaiting_upload',
+                    take_response_doc_id: finalResponseDocId,
+                    take_media_status: 'awaiting_upload',
+                    take_media_processing_error: null,
+                    take_media_processing_failed_at: null,
+                });
+                if (storyId) {
+                    await db.collection('stories').doc(storyId).update({
+                        finalReportId,
+                        status: 'final_recorded',
+                        finalRecordedAt: admin.firestore.FieldValue.serverTimestamp(),
+                    });
+                }
+                console.log(`[${sessionId}] stopFinalTelling: Firestore updated for storyId=${storyId}`);
+            } catch (err) {
+                console.error(`[${sessionId}] stopFinalTelling: Firestore update error:`, err.message);
+            }
+        }
+
+        socket.emit('finalTellingEnded', { reportId: finalReportId });
     });
 
     // New event for when client is ready at the report page
@@ -3205,8 +3486,13 @@ ${interview.content || 'No content available'}`
         const transcriptionProcessStartTime = Date.now();
         console.log(`[${currentSessionId}] 🎤 TRANSCRIPTION PROCESSING - Starting at ${new Date().toISOString()} (via ${contextSource})`);
         
-        const finalTranscript = sessionInfoToProcess.currentTranscription.trim();
         const finalWordTimestamps = sessionInfoToProcess.currentWordTimestamps;
+        // Build transcript from word timestamps when available so that [pause] and
+        // [long pause] markers are included for Claude to read. Fall back to the
+        // plain concatenated string if no word-level data exists.
+        const finalTranscript = finalWordTimestamps && finalWordTimestamps.length > 0
+            ? assembleTranscriptWithPauses(finalWordTimestamps)
+            : sessionInfoToProcess.currentTranscription.trim();
 
         // console.log(`[${currentSessionId}] Final combined transcript from Deepgram (via ${contextSource}): "${finalTranscript}"`);
         // console.log(`[${currentSessionId}] Final combined word timestamps count (via ${contextSource}): ${finalWordTimestamps.length}`);
@@ -3352,10 +3638,18 @@ ${interview.content || 'No content available'}`
 
             // generateNextQuestion is also in the scope of io.on('connection', (socket) => { ... })
             // and uses the 'socket' variable from that scope.
-            await generateNextQuestion(finalTranscript); 
+            if (sessionInfoToProcess.mode === 'final_telling') {
+                console.log(`[${currentSessionId}] Final telling mode — skipping generateNextQuestion.`);
+            } else {
+                await generateNextQuestion(finalTranscript);
+            }
         } else {
             console.warn(`[${currentSessionId}] No final transcript from Deepgram to process (via ${contextSource}).`);
-            await generateNextQuestion(null); 
+            if (sessionInfoToProcess.mode === 'final_telling') {
+                console.log(`[${currentSessionId}] Final telling mode — skipping generateNextQuestion (empty transcript).`);
+            } else {
+                await generateNextQuestion(null);
+            }
         }
         
         // Reset for next turn
@@ -3394,6 +3688,11 @@ ${interview.content || 'No content available'}`
         sessionInfo.currentTranscription = '';
         sessionInfo.currentWordTimestamps = [];
         
+        if (!deepgramClient) {
+            console.error(`[${sessionId}] Deepgram client not initialized - DEEPGRAM_API_KEY may be missing`);
+            socket.emit('deepgramError', { message: 'Speech transcription is not configured on this server.' });
+            return;
+        }
         try {
             const dgSocketInstance = deepgramClient.listen.live({ // Updated method
                 punctuate: true,
@@ -4227,7 +4526,7 @@ ${interview.content || 'No content available'}`
                     console.log('=== END GENERATE QUESTION DEBUG ===');
 
                     const requestBody = {
-                        model: "claude-sonnet-4-6", // Always use Opus 4.5 for best question quality
+                        model: sessionInfo.followupModel || "claude-sonnet-4-6", // Use template's followupModel; default to Sonnet for cost
                         max_tokens: 1500, // 1024 for thinking budget + buffer for question
                         messages: messages,
                         temperature: 1,
@@ -5780,14 +6079,19 @@ app.post('/api/claude', requireAuth, async (req, res) => {
         
         // Validate userId exists
         if (!userId) {
-            console.error('[/api/claude] Missing user ID in request:', { 
-                user: req.user, 
+            console.error('[/api/claude] Missing user ID in request:', {
+                user: req.user,
                 sessionUserId: req.session?.userId,
-                sessionEmail: req.session?.email 
+                sessionEmail: req.session?.email
             });
             return res.status(401).json({ error: 'User ID not found. Please log in again.' });
         }
-        
+
+        // Validate messages
+        if (!messages || !Array.isArray(messages) || messages.length === 0) {
+            return res.status(400).json({ error: 'Messages are required' });
+        }
+
         // Check if user has reached the free tier message limit for analyst/copilot
         const FREE_TIER_ANALYST_LIMIT = 10; // 10 messages for free tier users
         
@@ -6540,40 +6844,42 @@ server.keepAliveTimeout = 65000; // 65 seconds (should be higher than proxy time
 server.headersTimeout = 66000; // 66 seconds (slightly higher than keepAliveTimeout)
 server.timeout = 300000; // 5 minutes for long-running requests
 
-// Modify the server.listen to work with Vercel
-try {
-  server.listen(PORT, () => {
-    console.log('=== SERVER STARTED SUCCESSFULLY ===');
-    console.log(`Server running on http://localhost:${PORT}`);
-    console.log(`Static files being served from: ${path.join(__dirname, 'public')}`);
-    console.log(`Ready to handle Claude API requests`);
-    console.log(`Ready to handle voice interviews`);
-    console.log('');
-    console.log('Service Status Summary:');
-    console.log(`- Firebase: ${db ? '✓ Connected' : '✗ Not connected'}`);
-    console.log(`- Google Cloud Storage: ${storage ? '✓ Connected' : '✗ Not connected'}`);
-    console.log(`- Email Service: ${SENDGRID_API_KEY || process.env.GMAIL_CLIENT_ID ? '✓ Available' : '✗ Not configured'}`);
-    console.log(`- Stripe: ${stripe ? '✓ Connected' : '✗ Not connected'}`);
-    
-    // Start campaign email sender if Firebase is available
-    if (db) {
-      const campaignSender = require('./server/utils/campaign-sender');
-      campaignSender.start();
-      console.log(`- Campaign Sender: ✓ Started`);
-    } else {
-      console.log(`- Campaign Sender: ✗ Not started (requires Firebase)`);
-    }
-    
-    console.log('');
-    console.log('Visit /health for detailed status information');
-    console.log('=================================');
-  });
-} catch (error) {
-  console.error('CRITICAL ERROR starting server:', error);
-  console.error('Error type:', error.constructor.name);
-  console.error('Error message:', error.message);
-  console.error('Stack trace:', error.stack);
-  process.exit(1);
+// Only bind when run directly — not when required by tests or Vercel serverless
+if (require.main === module) {
+  try {
+    server.listen(PORT, () => {
+      console.log('=== SERVER STARTED SUCCESSFULLY ===');
+      console.log(`Server running on http://localhost:${PORT}`);
+      console.log(`Static files being served from: ${path.join(__dirname, 'public')}`);
+      console.log(`Ready to handle Claude API requests`);
+      console.log(`Ready to handle voice interviews`);
+      console.log('');
+      console.log('Service Status Summary:');
+      console.log(`- Firebase: ${db ? '✓ Connected' : '✗ Not connected'}`);
+      console.log(`- Google Cloud Storage: ${storage ? '✓ Connected' : '✗ Not connected'}`);
+      console.log(`- Email Service: ${SENDGRID_API_KEY || process.env.GMAIL_CLIENT_ID ? '✓ Available' : '✗ Not configured'}`);
+      console.log(`- Stripe: ${stripe ? '✓ Connected' : '✗ Not connected'}`);
+
+      // Start campaign email sender if Firebase is available
+      if (db) {
+        const campaignSender = require('./server/utils/campaign-sender');
+        campaignSender.start();
+        console.log(`- Campaign Sender: ✓ Started`);
+      } else {
+        console.log(`- Campaign Sender: ✗ Not started (requires Firebase)`);
+      }
+
+      console.log('');
+      console.log('Visit /health for detailed status information');
+      console.log('=================================');
+    });
+  } catch (error) {
+    console.error('CRITICAL ERROR starting server:', error);
+    console.error('Error type:', error.constructor.name);
+    console.error('Error message:', error.message);
+    console.error('Stack trace:', error.stack);
+    process.exit(1);
+  }
 }
 
 // Export the Express app for Vercel
@@ -7468,7 +7774,7 @@ app.post('/api/interviews/:interviewId/upload-recording',
   ]),
   async (req, res) => {
     const interviewId = req.params.interviewId;
-    const { responseDocId, persistentSessionId } = req.body;
+    const { responseDocId, persistentSessionId, storyId } = req.body;
     const audioFile = req.files?.audio?.[0];
     const videoFile = req.files?.video?.[0];
     
@@ -7526,7 +7832,9 @@ app.post('/api/interviews/:interviewId/upload-recording',
         reportId: persistentSessionId,
         socketId: null, // No socket for HTTP upload
         sessionId: sessionId,
-        interviewId: interviewId
+        interviewId: interviewId,
+        storyId: storyId || null,
+        isStoryFinalTelling: !!storyId
       }, (err) => {
         if (err) {
           console.error(`[Recording Upload] Queue error:`, err);
@@ -7557,6 +7865,52 @@ app.post('/api/interviews/:interviewId/upload-recording',
         message: 'Failed to process recording upload',
         error: error.message 
       });
+    }
+  }
+);
+
+// --- Story Final Telling Upload ---
+// Dedicated endpoint for story final tellings. The general interview upload route
+// validates interviewId with a min-length of 20, which rejects 'story-template-v1' (16 chars).
+app.post('/api/stories/:storyId/upload-final',
+  mediaUpload.fields([
+    { name: 'audio', maxCount: 1 },
+    { name: 'video', maxCount: 1 }
+  ]),
+  async (req, res) => {
+    const { storyId } = req.params;
+    const { responseDocId, persistentSessionId } = req.body;
+    const audioFile = req.files?.audio?.[0];
+    const videoFile = req.files?.video?.[0];
+
+    console.log(`[StoryUpload] storyId=${storyId} reportId=${persistentSessionId} audio=${audioFile?.size || 0}b video=${videoFile?.size || 0}b`);
+
+    if (!audioFile) {
+      return res.status(400).json({ success: false, message: 'Audio file is required' });
+    }
+    if (!responseDocId || !persistentSessionId) {
+      return res.status(400).json({ success: false, message: 'Missing responseDocId or persistentSessionId' });
+    }
+
+    try {
+      mediaQueue.push({
+        audioBuffer: audioFile.buffer,
+        videoBuffer: videoFile?.buffer || Buffer.alloc(0),
+        audioMimeType: audioFile.mimetype,
+        videoMimeType: videoFile?.mimetype || '',
+        responseDocId,
+        reportId: persistentSessionId,
+        socketId: null,
+        sessionId: `STORY_UPLOAD_${storyId}_${Date.now()}`,
+        interviewId: null,
+        storyId,
+        isStoryFinalTelling: true,
+      });
+
+      res.json({ success: true, message: 'Upload initiated', responseDocId });
+    } catch (err) {
+      console.error(`[StoryUpload] Queue error:`, err.message);
+      res.status(500).json({ success: false, message: 'Failed to queue upload' });
     }
   }
 );

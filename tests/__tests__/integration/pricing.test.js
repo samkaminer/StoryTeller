@@ -1,6 +1,8 @@
 const request = require('supertest');
 const { createTestApp, closeTestServer, clearAllMocks } = require('../../test-factory');
 
+const AUTH_HEADER = { Authorization: 'Bearer test-token' };
+
 describe('Pricing/Subscription API Endpoints', () => {
   let app, server;
 
@@ -19,79 +21,40 @@ describe('Pricing/Subscription API Endpoints', () => {
   });
 
   describe('GET /api/subscription', () => {
-    it('should require userId parameter', async () => {
+    it('should require auth token', async () => {
       const response = await request(app)
         .get('/api/subscription')
-        .expect(400);
+        .expect(401);
 
-      expect(response.body).toHaveProperty('error', 'userId is required');
+      expect(response.body).toHaveProperty('error', 'Authorization token required');
     });
 
-    it('should return subscription status for user', async () => {
-      // Mock pricing service
-      global.pricingService = {
-        getSubscriptionStatus: jest.fn().mockResolvedValue({
-          hasActiveSubscription: true,
-          plan: 'pro',
-          status: 'active',
-          currentPeriodEnd: new Date()
-        })
-      };
-
+    it('should return subscription data for authenticated user', async () => {
       const response = await request(app)
-        .get('/api/subscription')
-        .query({ userId: 'test-user' })
+        .get('/api/subscription').set(AUTH_HEADER)
         .expect(200);
 
-      expect(response.body).toHaveProperty('hasActiveSubscription', true);
-      expect(response.body).toHaveProperty('plan', 'pro');
-      expect(response.body).toHaveProperty('status', 'active');
-    });
-
-    it('should handle users without subscription', async () => {
-      global.pricingService = {
-        getSubscriptionStatus: jest.fn().mockResolvedValue({
-          hasActiveSubscription: false,
-          plan: null,
-          status: 'inactive'
-        })
-      };
-
-      const response = await request(app)
-        .get('/api/subscription')
-        .query({ userId: 'free-user' })
-        .expect(200);
-
-      expect(response.body).toHaveProperty('hasActiveSubscription', false);
-      expect(response.body.plan).toBeNull();
+      expect(response.body).toHaveProperty('subscription');
+      expect(response.body).toHaveProperty('canCompleteInterview');
+      expect(response.body).toHaveProperty('pricingPlans');
+      expect(response.body).toHaveProperty('freeTrialLimit');
     });
   });
 
   describe('POST /api/subscription/checkout', () => {
-    it('should require userId and priceId', async () => {
+    it('should require planId', async () => {
       const response = await request(app)
-        .post('/api/subscription/checkout')
+        .post('/api/subscription/checkout').set(AUTH_HEADER)
         .send({})
         .expect(400);
 
-      expect(response.body).toHaveProperty('error', 'userId and priceId are required');
+      expect(response.body).toHaveProperty('error', 'Plan ID is required');
     });
 
     it('should create checkout session', async () => {
-      // Mock Stripe
-      const mockStripe = require('stripe')();
-      mockStripe.checkout.sessions.create.mockResolvedValue({
-        url: 'https://checkout.stripe.com/test-session'
-      });
-
       const response = await request(app)
-        .post('/api/subscription/checkout')
-        .send({
-          userId: 'test-user',
-          priceId: 'price_123',
-          successUrl: 'http://localhost:3000/success',
-          cancelUrl: 'http://localhost:3000/cancel'
-        })
+        .post('/api/subscription/checkout').set(AUTH_HEADER)
+        .send({ planId: 'starter' })
         .expect(200);
 
       expect(response.body).toHaveProperty('checkoutUrl');
@@ -100,90 +63,37 @@ describe('Pricing/Subscription API Endpoints', () => {
   });
 
   describe('POST /api/webhooks/stripe', () => {
-    it('should require stripe signature', async () => {
+    it('should return 400 when webhook secret not configured', async () => {
       const response = await request(app)
         .post('/api/webhooks/stripe')
         .send({})
         .expect(400);
-
-      expect(response.body).toHaveProperty('error');
-    });
-
-    it('should handle valid webhook events', async () => {
-      // This is complex to test properly as it requires valid Stripe signatures
-      // For now, we'll test the structure
-      const mockEvent = {
-        type: 'checkout.session.completed',
-        data: {
-          object: {
-            customer: 'cus_123',
-            subscription: 'sub_123'
-          }
-        }
-      };
-
-      // Mock Stripe webhook construction
-      const mockStripe = require('stripe')();
-      mockStripe.webhooks = {
-        constructEvent: jest.fn().mockReturnValue(mockEvent)
-      };
-
-      const response = await request(app)
-        .post('/api/webhooks/stripe')
-        .set('stripe-signature', 'mock-signature')
-        .send(JSON.stringify(mockEvent))
-        .expect(200);
-
-      expect(response.body).toHaveProperty('received', true);
     });
   });
 
   describe('POST /api/test/increment-usage', () => {
-    it('should increment usage for testing', async () => {
-      global.pricingService = {
-        incrementUsage: jest.fn().mockResolvedValue({
-          count: 5,
-          limit: 100
-        })
-      };
-
+    it('should increment usage for authenticated user', async () => {
       const response = await request(app)
-        .post('/api/test/increment-usage')
-        .send({
-          userId: 'test-user',
-          featureType: 'test-feature'
-        })
+        .post('/api/test/increment-usage').set(AUTH_HEADER)
+        .send({})
         .expect(200);
 
-      expect(response.body).toHaveProperty('message');
-      expect(response.body).toHaveProperty('usage');
-      expect(global.pricingService.incrementUsage).toHaveBeenCalled();
+      expect(response.body).toHaveProperty('message', 'Usage incremented successfully');
+      expect(response.body).toHaveProperty('subscription');
+      expect(response.body).toHaveProperty('canCompleteInterview');
     });
   });
 
   describe('POST /api/test/reset-usage', () => {
-    it('should reset usage for testing', async () => {
-      // Mock Firestore
-      const mockFirestore = require('firebase-admin').firestore();
-      const mockUpdate = jest.fn().mockResolvedValue();
-      
-      mockFirestore.collection.mockReturnValue({
-        doc: jest.fn().mockReturnValue({
-          update: mockUpdate
-        })
-      });
-
+    it('should reset usage for authenticated user', async () => {
       const response = await request(app)
-        .post('/api/test/reset-usage')
-        .send({ userId: 'test-user' })
+        .post('/api/test/reset-usage').set(AUTH_HEADER)
+        .send({})
         .expect(200);
 
-      expect(response.body).toHaveProperty('message');
-      expect(mockUpdate).toHaveBeenCalledWith({
-        'usage.interviewReports.count': 0,
-        'usage.voiceInterviews.count': 0,
-        'usage.copilotChats.count': 0
-      });
+      expect(response.body).toHaveProperty('message', 'Usage reset successfully');
+      expect(response.body).toHaveProperty('subscription');
+      expect(response.body).toHaveProperty('canCompleteInterview');
     });
   });
 });

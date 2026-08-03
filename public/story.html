@@ -1,0 +1,956 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>StoryTeller</title>
+  <meta name="description" content="Tell a story worth keeping.">
+  <link rel="icon" type="image/png" href="/saylogo.png">
+
+  <script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-auth-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-firestore-compat.js"></script>
+  <script src="js/firebase-config.js"></script>
+
+  <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,400;0,500;0,700;0,900;1,400;1,500;1,700&family=Inter:wght@300;400;500&display=swap" rel="stylesheet">
+
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --bg:       #F3EDD8;
+      --bg-card:  #EAE3CC;
+      --text:     #1C1610;
+      --muted:    #7A6E5B;
+      --border:   #D9D0B8;
+      --ink:      #2C3C6A;
+      --fd:       'Playfair Display', Georgia, serif;
+      --fu:       'Inter', system-ui, sans-serif;
+      --nav:      56px;
+    }
+
+    html, body { height: 100%; background: var(--bg); color: var(--text); font-family: var(--fu); -webkit-font-smoothing: antialiased; overflow-x: hidden; }
+
+    .screen { display: none; min-height: 100dvh; flex-direction: column; }
+    .screen.active { display: flex; }
+    .hidden { display: none !important; }
+
+    @keyframes fadeUp { from { opacity: 0; transform: translateY(12px); } to { opacity: 1; transform: translateY(0); } }
+    .fade-in { animation: fadeUp 0.4s ease both; }
+
+    /* ── GLOBAL NAV ─────────────────────────────────────────── */
+    .app-nav {
+      display: none;
+      position: fixed; top: 0; left: 0; right: 0;
+      height: var(--nav);
+      padding: 0 2rem;
+      align-items: center;
+      justify-content: space-between;
+      background: var(--bg);
+      border-bottom: 1px solid var(--border);
+      z-index: 100;
+    }
+    .nav-mark { font-family: var(--fd); font-weight: 700; font-size: 1.0625rem; letter-spacing: -0.01em; color: var(--text); }
+    .nav-right { display: flex; align-items: center; gap: 1.25rem; font-size: 0.875rem; color: var(--muted); }
+    .nav-link { color: var(--muted); text-decoration: none; transition: color 0.15s; }
+    .nav-link:hover { color: var(--text); }
+
+    /* ── SHARED ─────────────────────────────────────────────── */
+    .step-lbl {
+      font-family: var(--fu); font-size: 0.6875rem; font-weight: 500;
+      letter-spacing: 0.1em; text-transform: uppercase; color: var(--ink);
+    }
+    .input-field {
+      width: 100%; padding: 0.8125rem 1rem;
+      border: 1.5px solid var(--border); border-radius: 12px;
+      font-family: var(--fu); font-size: 0.9375rem;
+      color: var(--text); background: var(--bg);
+      outline: none; transition: border-color 0.15s; -webkit-appearance: none;
+    }
+    .input-field:focus { border-color: var(--ink); }
+    .input-field::placeholder { color: var(--muted); }
+    .error-msg {
+      padding: 0.625rem 0.875rem;
+      background: rgba(185,28,28,0.08); border: 1px solid rgba(185,28,28,0.2);
+      border-radius: 8px; color: #991b1b; font-size: 0.8125rem; line-height: 1.5;
+    }
+    .btn-google {
+      display: flex; align-items: center; justify-content: center; gap: 0.625rem;
+      width: 100%; padding: 0.9375rem 1rem;
+      background: var(--bg); color: var(--text);
+      border: 1.5px solid var(--border); border-radius: 100px;
+      font-family: var(--fu); font-size: 0.9375rem; font-weight: 500;
+      cursor: pointer; transition: background 0.15s, border-color 0.15s;
+    }
+    .btn-google:hover { background: var(--bg-card); border-color: var(--muted); }
+    .btn-google:disabled { opacity: 0.5; cursor: default; }
+    .btn-outline {
+      display: flex; align-items: center; justify-content: center;
+      width: 100%; padding: 0.9375rem 1.5rem;
+      background: transparent; color: var(--text);
+      border: 1.5px solid var(--border); border-radius: 100px;
+      font-family: var(--fu); font-size: 0.9375rem;
+      cursor: pointer; transition: background 0.15s, border-color 0.15s;
+    }
+    .btn-outline:hover { background: var(--bg-card); border-color: var(--muted); }
+    .btn-submit-email {
+      width: 100%; padding: 0.9375rem;
+      background: var(--ink); color: #fff; border: none; border-radius: 100px;
+      font-family: var(--fu); font-size: 0.9375rem; font-weight: 500;
+      cursor: pointer; transition: opacity 0.15s;
+    }
+    .btn-submit-email:hover { opacity: 0.85; }
+    .btn-submit-email:disabled { opacity: 0.4; cursor: default; }
+    .auth-toggle { text-align: center; font-size: 0.8125rem; color: var(--muted); }
+    .auth-toggle a { color: var(--ink); text-decoration: underline; text-underline-offset: 2px; cursor: pointer; }
+    .auth-privacy { font-size: 0.75rem; color: var(--muted); opacity: 0.65; text-align: center; line-height: 1.5; }
+    .consent-label { display: flex; align-items: flex-start; gap: 0.625rem; font-size: 0.8125rem; color: var(--muted); line-height: 1.5; cursor: pointer; margin-bottom: 0.75rem; max-width: 360px; }
+    .consent-check { flex-shrink: 0; margin-top: 0.125rem; width: 16px; height: 16px; accent-color: var(--ink); cursor: pointer; }
+    .email-form-row { display: flex; flex-direction: column; gap: 0.5rem; }
+
+    /* ── AUTH SCREEN ────────────────────────────────────────── */
+    #screen-auth { justify-content: space-between; }
+
+    /* Mobile auth */
+    .auth-mobile { display: flex; flex-direction: column; justify-content: space-between; flex: 1; }
+    .auth-top {
+      flex: 1; display: flex; flex-direction: column;
+      align-items: center; justify-content: center;
+      padding: 4rem 1.5rem 2rem;
+    }
+    .auth-rule { width: 28px; height: 2px; background: var(--ink); border-radius: 1px; margin-bottom: 1.375rem; }
+    .auth-wordmark {
+      font-family: var(--fd); font-weight: 700; font-size: 3rem;
+      letter-spacing: -0.025em; line-height: 1; margin-bottom: 0.5rem;
+    }
+    .auth-tagline { font-size: 0.9375rem; color: var(--muted); text-align: center; }
+    .auth-bottom {
+      padding: 0 1.5rem 2.75rem;
+      display: flex; flex-direction: column; gap: 0.625rem;
+    }
+
+    /* Desktop auth */
+    .auth-desktop { display: none; }
+
+    @media (min-width: 900px) {
+      .app-nav { display: flex; }
+      #screen-auth { padding-top: var(--nav); justify-content: flex-start; }
+      .auth-mobile { display: none; }
+      .auth-desktop {
+        flex: 1; display: flex; align-items: center;
+        padding: 4rem 5rem; gap: 5rem;
+      }
+      .auth-left { flex: 0 0 460px; display: flex; flex-direction: column; }
+      .auth-left .auth-rule { margin-bottom: 1.75rem; }
+      .auth-big-hl {
+        font-family: var(--fd); font-weight: 700;
+        font-size: clamp(3.5rem, 5vw, 5.5rem);
+        line-height: 1.05; letter-spacing: -0.03em; margin-bottom: 1.25rem;
+      }
+      .auth-body {
+        font-size: 1rem; color: var(--muted); line-height: 1.65;
+        margin-bottom: 2.5rem; max-width: 380px;
+      }
+      .auth-btns { display: flex; flex-direction: column; gap: 0.625rem; max-width: 360px; }
+      .auth-right { flex: 1; display: flex; flex-direction: column; align-items: center; gap: 1rem; }
+      .phone-frame {
+        width: 210px; aspect-ratio: 9/19;
+        background: var(--bg-card); border: 1.5px solid var(--border);
+        border-radius: 30px; overflow: hidden;
+        display: flex; flex-direction: column; padding: 1.25rem 1rem 1rem;
+      }
+      .phone-q {
+        margin-top: auto; font-family: var(--fd); font-style: italic;
+        font-size: 0.8125rem; color: var(--text); line-height: 1.45; margin-bottom: 1rem;
+      }
+      .phone-hint {
+        text-align: center; font-size: 0.625rem;
+        letter-spacing: 0.07em; text-transform: uppercase;
+        color: var(--muted); margin-bottom: 0.625rem;
+      }
+      .phone-btn {
+        border: 1px solid var(--border); border-radius: 100px;
+        padding: 0.5rem; text-align: center;
+        font-size: 0.625rem; color: var(--muted); font-family: var(--fu);
+      }
+      .phone-caption { font-size: 0.8125rem; color: var(--muted); }
+    }
+
+    /* ── PROMPT SELECTION ───────────────────────────────────── */
+    .prompts-sidebar { display: none; }
+    .prompts-main { display: flex; flex-direction: column; flex: 1; }
+
+    .prompts-mob-header { padding: 3rem 1.375rem 1rem; }
+    .prompts-mob-header .step-lbl { display: block; margin-bottom: 0.625rem; }
+    .prompts-hl {
+      font-family: var(--fd); font-weight: 700;
+      font-size: 2.75rem; line-height: 1.08;
+      letter-spacing: -0.025em; margin-bottom: 0.5rem;
+    }
+    .prompts-sub { font-size: 0.9rem; color: var(--muted); line-height: 1.55; }
+
+    #promptGrid {
+      flex: 1; padding: 0.75rem 1.125rem 0;
+      display: flex; flex-direction: column; gap: 0.5rem;
+    }
+
+    .prompt-card {
+      padding: 1rem 1.125rem; border: 1.5px solid var(--border);
+      border-radius: 12px; background: var(--bg);
+      cursor: pointer; user-select: none; -webkit-tap-highlight-color: transparent;
+      transition: border-color 0.15s, background 0.15s, transform 0.1s;
+      display: flex; flex-direction: column; min-height: 90px;
+    }
+    .prompt-card:active { transform: scale(0.99); }
+    .prompt-card.selected { background: var(--bg-card); border-color: var(--ink); }
+    .prompt-card-text {
+      font-family: var(--fd); font-size: 1.0625rem; font-weight: 500;
+      line-height: 1.4; flex: 1;
+    }
+    .prompt-card-footer {
+      display: flex; align-items: center; justify-content: space-between;
+      margin-top: 0.625rem;
+    }
+    .prompt-card-category {
+      font-family: var(--fu); font-size: 0.6875rem;
+      letter-spacing: 0.09em; text-transform: uppercase; color: var(--muted);
+    }
+    .selected-indicator {
+      display: none; font-size: 0.6875rem; letter-spacing: 0.08em;
+      text-transform: uppercase; color: var(--ink); font-weight: 500;
+    }
+    .prompt-card.selected .prompt-card-category { display: none; }
+    .prompt-card.selected .selected-indicator { display: block; }
+
+    .prompts-mob-footer {
+      padding: 1rem 1.125rem 2rem;
+      display: flex; flex-direction: column; align-items: center; gap: 0.75rem;
+    }
+    .prompts-divider {
+      display: flex; align-items: center; gap: 0.875rem;
+      width: 100%; color: var(--muted); font-size: 0.8125rem;
+    }
+    .prompts-divider::before, .prompts-divider::after {
+      content: ''; flex: 1; height: 1px; background: var(--border);
+    }
+    .btn-surprise {
+      background: none; border: none; font-family: var(--fu);
+      font-size: 0.9rem; color: var(--muted); padding: 0.25rem 0.5rem;
+      cursor: pointer; transition: color 0.15s;
+    }
+    .btn-surprise:hover { color: var(--text); }
+    .btn-begin {
+      width: 100%; padding: 1rem;
+      background: var(--ink); color: #fff; border: none; border-radius: 100px;
+      font-family: var(--fu); font-size: 1rem; font-weight: 500;
+      cursor: pointer; transition: opacity 0.15s;
+    }
+    .btn-begin:hover { opacity: 0.88; }
+    .btn-begin:disabled { opacity: 0.3; cursor: default; }
+
+    /* Desktop prompt layout */
+    @media (min-width: 900px) {
+      .app-nav { display: flex; }
+      #screen-prompts { flex-direction: row; padding-top: var(--nav); }
+      .prompts-mob-header { display: none; }
+      .prompts-mob-footer { display: none; }
+
+      .prompts-sidebar {
+        width: 300px; flex-shrink: 0;
+        padding: 2.5rem 2rem;
+        display: flex; flex-direction: column;
+        border-right: 1px solid var(--border);
+        position: sticky; top: var(--nav);
+        height: calc(100dvh - var(--nav)); overflow-y: auto;
+      }
+      .sidebar-step { display: block; margin-bottom: 0.75rem; }
+      .sidebar-hl {
+        font-family: var(--fd); font-weight: 700;
+        font-size: 2.5rem; line-height: 1.1;
+        letter-spacing: -0.025em; margin-bottom: 0.75rem;
+      }
+      .sidebar-sub { font-size: 0.875rem; color: var(--muted); line-height: 1.6; }
+      .sidebar-actions {
+        margin-top: auto; padding-top: 2rem;
+        display: flex; flex-direction: column; gap: 0.625rem;
+      }
+      .sidebar-divider {
+        display: flex; align-items: center; gap: 0.75rem;
+        color: var(--muted); font-size: 0.8125rem;
+      }
+      .sidebar-divider::before, .sidebar-divider::after {
+        content: ''; flex: 1; height: 1px; background: var(--border);
+      }
+
+      .prompts-main { flex: 1; overflow-y: auto; }
+      #promptGrid {
+        display: grid; grid-template-columns: repeat(2, 1fr);
+        grid-template-rows: repeat(2, 1fr);
+        gap: 1rem; padding: 2rem; flex: none;
+        height: calc(100dvh - var(--nav));
+      }
+      .prompt-card { min-height: 0; flex: 1; }
+    }
+
+    /* ── COACHING SCREENS ───────────────────────────────────── */
+    #screen-coaching { flex: 1; }
+    .coaching-screen {
+      flex: 1; min-height: 100dvh;
+      display: flex; flex-direction: column; align-items: center; text-align: center;
+    }
+
+    /* Runway */
+    .runway-screen { padding: 4rem 1.75rem 3rem; justify-content: center; }
+    .runway-step { margin-bottom: 1.5rem; }
+    .runway-hl {
+      font-family: var(--fd); font-weight: 700;
+      font-size: clamp(2.25rem, 8vw, 3rem);
+      line-height: 1.1; letter-spacing: -0.025em;
+    }
+    .runway-italic {
+      font-family: var(--fd); font-weight: 400; font-style: italic;
+      font-size: clamp(1.5rem, 5vw, 2rem);
+      color: var(--ink); display: block; margin-bottom: 1.5rem;
+    }
+    .runway-body {
+      font-size: 0.9375rem; color: var(--muted); line-height: 1.65;
+      max-width: 340px; margin-bottom: 2rem;
+    }
+    .runway-card {
+      width: 100%; max-width: 380px;
+      border-left: 3px solid var(--ink); padding: 0.875rem 1.125rem;
+      background: var(--bg-card); border-radius: 0 10px 10px 0;
+      text-align: left; margin-bottom: 2.5rem;
+    }
+    .runway-card-lbl {
+      font-family: var(--fu); font-size: 0.6875rem; font-weight: 500;
+      letter-spacing: 0.1em; text-transform: uppercase; color: var(--ink);
+      margin-bottom: 0.375rem;
+    }
+    .runway-card-text {
+      font-family: var(--fd); font-style: italic;
+      font-size: 1.0625rem; color: var(--text); line-height: 1.45;
+    }
+    .btn-cta {
+      padding: 1rem 2.25rem;
+      background: var(--ink); color: #fff; border: none; border-radius: 100px;
+      font-family: var(--fu); font-size: 0.9375rem; font-weight: 500;
+      cursor: pointer; transition: opacity 0.15s;
+    }
+    .btn-cta:hover { opacity: 0.85; }
+    .runway-hint { font-size: 0.8125rem; color: var(--muted); margin-top: 0.875rem; opacity: 0.7; }
+
+    /* Warmup */
+    .warmup-screen { cursor: pointer; padding: 0; justify-content: flex-start; height: 100dvh; max-height: 100dvh; overflow: hidden; flex-direction: column; }
+    .warmup-top-bar {
+      flex-shrink: 0;
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 1.375rem 1.375rem 0.875rem;
+      background: var(--bg); z-index: 10;
+    }
+    .warmup-dots { display: flex; gap: 5px; }
+    .warmup-dot { width: 28px; height: 2.5px; border-radius: 2px; background: var(--border); transition: background 0.3s; }
+    .warmup-dot.done { background: var(--ink); }
+    .warmup-dot.active { background: var(--muted); }
+    .warmup-count { font-family: var(--fu); font-size: 0.8125rem; color: var(--muted); }
+    .warmup-skip-btn {
+      background: none; border: none; font-family: var(--fu);
+      font-size: 0.8125rem; color: var(--muted); cursor: pointer; padding: 0;
+    }
+    .warmup-skip-btn:hover { color: var(--text); }
+
+    .warmup-body {
+      padding: 1rem 1.75rem 1rem;
+      display: flex; flex-direction: column; align-items: center;
+      width: 100%; flex: 1; justify-content: center; overflow-y: auto;
+    }
+    .scenario-lbl {
+      font-family: var(--fu); font-size: 0.6875rem; font-weight: 500;
+      letter-spacing: 0.1em; text-transform: uppercase; color: var(--ink);
+      margin-bottom: 0.75rem;
+    }
+    .warmup-scenario {
+      font-family: var(--fd); font-weight: 700;
+      font-size: clamp(1.625rem, 6vw, 2.25rem);
+      line-height: 1.2; letter-spacing: -0.015em;
+      max-width: 320px; margin-bottom: 0.5rem;
+    }
+    .warmup-sub-text {
+      font-size: 0.9rem; color: var(--muted);
+      max-width: 300px; line-height: 1.5; margin-bottom: 2rem;
+    }
+    .intensity-lbl {
+      font-family: var(--fu); font-size: 0.6875rem; font-weight: 500;
+      letter-spacing: 0.1em; text-transform: uppercase; color: var(--ink);
+    }
+    @keyframes numIn { from { opacity: 0; transform: scale(0.75); } to { opacity: 1; transform: scale(1); } }
+    .warmup-number {
+      font-family: var(--fd); font-weight: 900; color: var(--ink);
+      font-size: clamp(5rem, 28vw, 8rem); line-height: 0.9;
+      letter-spacing: -0.03em;
+      animation: numIn 0.3s cubic-bezier(0.34,1.56,0.64,1) both;
+    }
+    .warmup-track { display: flex; align-items: center; margin: 1rem 0 1.75rem; }
+    .warmup-node {
+      width: 32px; height: 32px; border-radius: 50%;
+      border: 1.5px solid var(--border); background: var(--bg);
+      display: flex; align-items: center; justify-content: center;
+      font-family: var(--fu); font-size: 0.75rem; font-weight: 500;
+      color: var(--muted); flex-shrink: 0; transition: all 0.3s;
+    }
+    .warmup-node.current { border-color: var(--ink); background: var(--ink); color: #fff; width: 38px; height: 38px; font-size: 0.875rem; }
+    .warmup-node.past { border-color: var(--ink); color: var(--ink); }
+    .warmup-conn { width: 24px; height: 1.5px; background: var(--border); flex-shrink: 0; }
+    .warmup-conn.done { background: var(--ink); opacity: 0.3; }
+    .warmup-coaching-quote {
+      font-family: var(--fd); font-style: italic;
+      font-size: 0.9375rem; color: var(--muted);
+      max-width: 300px; line-height: 1.6; text-align: center;
+    }
+
+    .warmup-bottom {
+      flex-shrink: 0;
+      padding: 0.875rem 1.375rem 2.25rem; background: var(--bg);
+    }
+    @keyframes fillBar { from { width: 0%; } to { width: 100%; } }
+    .warmup-bar { width: 100%; height: 2px; background: var(--border); border-radius: 1px; margin-bottom: 0.625rem; overflow: hidden; }
+    .warmup-fill { height: 100%; background: var(--ink); border-radius: 1px; width: 0; animation: fillBar linear 4.2s both; }
+    .warmup-tap-hint { font-family: var(--fu); font-size: 0.8125rem; color: var(--muted); text-align: center; }
+    .btn-continue {
+      width: 100%; padding: 1rem;
+      background: var(--ink); color: #fff; border: none; border-radius: 100px;
+      font-family: var(--fu); font-size: 0.9375rem; font-weight: 500;
+      cursor: pointer; transition: opacity 0.15s;
+    }
+    .btn-continue:hover { opacity: 0.88; }
+
+    /* Audience frame */
+    .audience-screen { padding: 4rem 1.75rem 3rem; justify-content: center; }
+    .audience-rule { width: 28px; height: 2px; background: var(--ink); border-radius: 1px; margin-bottom: 2rem; }
+    .audience-text {
+      font-family: var(--fd); font-weight: 700;
+      font-size: clamp(1.625rem, 6.5vw, 2.25rem);
+      line-height: 1.22; letter-spacing: -0.02em;
+      max-width: 360px; margin-bottom: 0.875rem;
+    }
+    .audience-sub {
+      font-family: var(--fd); font-style: italic;
+      font-size: 1.0625rem; color: var(--muted);
+      line-height: 1.6; margin-bottom: 3rem; max-width: 280px;
+    }
+
+    /* Desktop coaching */
+    @media (min-width: 900px) {
+      .app-nav { display: flex; }
+      #screen-coaching { padding-top: var(--nav); }
+      .warmup-screen { height: calc(100dvh - var(--nav)); max-height: calc(100dvh - var(--nav)); }
+      .warmup-body { padding-top: 2rem; padding-bottom: 2rem; }
+      .warmup-scenario { max-width: 660px; font-size: clamp(1.25rem, 2.2vw, 2rem); }
+      .warmup-number { font-size: clamp(4rem, 7.5vw, 7rem); }
+      .warmup-coaching-quote { max-width: 520px; font-size: 1.0625rem; }
+    }
+
+    /* ── REVIEW SCREEN ──────────────────────────────────────── */
+    #screen-review {
+      padding-top: var(--nav);
+      min-height: 100dvh;
+      background: var(--bg);
+    }
+    .review-layout {
+      display: flex;
+      flex-direction: column;
+      max-width: 720px;
+      margin: 0 auto;
+      padding: 3rem 1.75rem 5rem;
+      gap: 2.5rem;
+    }
+    .review-header { display: flex; flex-direction: column; gap: 0.5rem; }
+    .review-step-lbl {
+      font-family: var(--fu); font-size: 0.6875rem; font-weight: 500;
+      letter-spacing: 0.1em; text-transform: uppercase; color: var(--ink);
+    }
+    .review-title {
+      font-family: var(--fd); font-weight: 700;
+      font-size: clamp(2rem, 5vw, 3rem);
+      letter-spacing: -0.025em; line-height: 1.1;
+    }
+    .review-subtitle {
+      font-size: 1rem; color: var(--muted); line-height: 1.6; margin-top: 0.25rem;
+    }
+    .review-prompt-card {
+      background: var(--bg-card); border: 1.5px solid var(--border);
+      border-radius: 16px; padding: 1.5rem 1.75rem;
+    }
+    .review-prompt-lbl {
+      font-family: var(--fu); font-size: 0.6875rem; font-weight: 500;
+      letter-spacing: 0.1em; text-transform: uppercase; color: var(--muted);
+      margin-bottom: 0.625rem;
+    }
+    .review-prompt-text {
+      font-family: var(--fd); font-style: italic;
+      font-size: clamp(1.0625rem, 2.5vw, 1.25rem);
+      line-height: 1.5; color: var(--text);
+    }
+    .review-transcript {
+      display: flex; flex-direction: column; gap: 1.25rem;
+    }
+    .review-section-lbl {
+      font-family: var(--fu); font-size: 0.6875rem; font-weight: 500;
+      letter-spacing: 0.1em; text-transform: uppercase; color: var(--muted);
+      margin-bottom: 0.25rem;
+    }
+    .transcript-turn { display: flex; flex-direction: column; gap: 0.25rem; }
+    .transcript-role {
+      font-size: 0.75rem; font-weight: 600; letter-spacing: 0.04em;
+      text-transform: uppercase; color: var(--muted);
+    }
+    .transcript-role.user-role { color: var(--ink); }
+    .transcript-text {
+      font-size: 0.9375rem; line-height: 1.65; color: var(--text);
+      background: var(--bg-card); border-radius: 10px;
+      padding: 0.875rem 1rem; border: 1px solid var(--border);
+    }
+    .transcript-text.user-text { border-color: rgba(44,60,106,0.18); }
+    .review-loading {
+      display: flex; flex-direction: column; align-items: center;
+      justify-content: center; gap: 1rem; padding: 4rem 0; color: var(--muted);
+    }
+    .review-spinner {
+      width: 36px; height: 36px;
+      border: 2.5px solid var(--border);
+      border-top-color: var(--ink);
+      border-radius: 50%;
+      animation: reviewSpin 0.8s linear infinite;
+    }
+    @keyframes reviewSpin { to { transform: rotate(360deg); } }
+    .review-loading-text { font-size: 0.9375rem; }
+    .review-cta {
+      display: flex; flex-direction: column; gap: 0.875rem;
+      padding-top: 1rem; border-top: 1px solid var(--border);
+    }
+    .review-cta-text {
+      font-family: var(--fd); font-size: 1.125rem; color: var(--text); line-height: 1.5;
+    }
+    .btn-primary {
+      display: inline-flex; align-items: center; justify-content: center;
+      padding: 0.9375rem 2rem;
+      background: var(--ink); color: #fff;
+      border: none; border-radius: 100px;
+      font-family: var(--fu); font-size: 0.9375rem; font-weight: 500;
+      cursor: pointer; transition: opacity 0.15s; text-decoration: none;
+    }
+    .btn-primary:hover { opacity: 0.85; }
+    .btn-primary:disabled { opacity: 0.4; cursor: default; }
+    @media (min-width: 900px) {
+      .review-layout { padding: 3.5rem 2.5rem 6rem; }
+      .review-cta { flex-direction: row; align-items: center; }
+    }
+  </style>
+</head>
+<body>
+
+  <nav class="app-nav" id="appNav">
+    <span class="nav-mark">StoryTeller</span>
+    <div class="nav-right" id="navRight" style="display:none">
+      <a class="nav-link" href="#">My stories</a>
+      <span id="navEmail"></span>
+    </div>
+  </nav>
+
+  <!-- ── AUTH ──────────────────────────────────────────── -->
+  <div id="screen-auth" class="screen active">
+
+    <!-- Mobile -->
+    <div class="auth-mobile">
+      <div class="auth-top">
+        <div class="auth-rule"></div>
+        <h1 class="auth-wordmark">StoryTeller</h1>
+        <p class="auth-tagline">Tell the story only you can tell.</p>
+      </div>
+      <div class="auth-bottom">
+        <button class="btn-google" id="googleBtn">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"/><path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"/><path fill="#FBBC05" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z"/><path fill="#EA4335" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z"/></svg>
+          Continue with Google
+        </button>
+        <button class="btn-outline" id="showEmailBtn">Continue with email</button>
+        <div id="emailBox" class="hidden email-form-row">
+          <form id="emailForm" novalidate class="email-form-row">
+            <input class="input-field" type="email" id="emailInput" placeholder="Email address" autocomplete="email"/>
+            <input class="input-field" type="password" id="passwordInput" placeholder="Password" autocomplete="current-password"/>
+            <button class="btn-submit-email" type="submit" id="emailSubmitBtn">Sign in</button>
+          </form>
+          <p class="auth-toggle" id="authToggle">Don't have an account? <a href="#" id="authToggleLink">Sign up</a></p>
+        </div>
+        <div id="authError" class="error-msg hidden"></div>
+        <label class="consent-label" for="consentCheck">
+          <input type="checkbox" id="consentCheck" class="consent-check">
+          <span>I'm happy for my anonymized story data to help improve StoryTeller.</span>
+        </label>
+        <p class="auth-privacy">By continuing you agree to our Terms of Service.<br>Your recordings are private by default.</p>
+      </div>
+    </div>
+
+    <!-- Desktop -->
+    <div class="auth-desktop">
+      <div class="auth-left">
+        <div class="auth-rule"></div>
+        <h1 class="auth-big-hl">Tell the story<br>only you<br>can tell.</h1>
+        <p class="auth-body">A somatic storytelling experience. Choose a moment, wake your body up, let the story find its shape — then record it.</p>
+        <div class="auth-btns">
+          <button class="btn-google" id="googleBtnDt">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"/><path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"/><path fill="#FBBC05" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z"/><path fill="#EA4335" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z"/></svg>
+            Continue with Google
+          </button>
+          <button class="btn-outline" id="showEmailBtnDt">Continue with email</button>
+          <div id="emailBoxDt" class="hidden email-form-row">
+            <form id="emailFormDt" novalidate class="email-form-row">
+              <input class="input-field" type="email" id="emailInputDt" placeholder="Email address" autocomplete="email"/>
+              <input class="input-field" type="password" id="passwordInputDt" placeholder="Password" autocomplete="current-password"/>
+              <button class="btn-submit-email" type="submit" id="emailSubmitBtnDt">Sign in</button>
+            </form>
+            <p class="auth-toggle" id="authToggleDt">Don't have an account? <a href="#" id="authToggleLinkDt">Sign up</a></p>
+          </div>
+          <div id="authErrorDt" class="error-msg hidden"></div>
+          <label class="consent-label" for="consentCheckDt">
+            <input type="checkbox" id="consentCheckDt" class="consent-check">
+            <span>I'm happy for my anonymized story data to help improve StoryTeller.</span>
+          </label>
+          <p class="auth-privacy">Your recordings are private by default.</p>
+        </div>
+      </div>
+      <div class="auth-right">
+        <div class="phone-frame">
+          <p class="phone-q">"That moment when you didn't feel out of place anymore..."</p>
+          <p class="phone-hint">speak freely</p>
+          <div class="phone-btn">I'm done telling my story</div>
+        </div>
+        <p class="phone-caption">Works on any device</p>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── PROMPT SELECTION ───────────────────────────────── -->
+  <div id="screen-prompts" class="screen">
+
+    <!-- Desktop sidebar -->
+    <div class="prompts-sidebar fade-in">
+      <span class="step-lbl sidebar-step">Step 1 of 3</span>
+      <h2 class="sidebar-hl">Choose<br>your<br>moment.</h2>
+      <p class="sidebar-sub">Pick the prompt that pulls at something real. You'll carry it through the warm-up and into your story.</p>
+      <div class="sidebar-actions">
+        <div class="sidebar-divider">or</div>
+        <button class="btn-surprise" id="surpriseBtnDt">Show me others ↻</button>
+        <button class="btn-begin" id="beginBtnDt" disabled>This is my story →</button>
+      </div>
+    </div>
+
+    <!-- Main content (mobile header + grid + mobile footer) -->
+    <div class="prompts-main">
+      <div class="prompts-mob-header fade-in">
+        <span class="step-lbl">Your Story</span>
+        <h2 class="prompts-hl">Choose<br>your moment.</h2>
+        <p class="prompts-sub">Pick the prompt that pulls at something real.</p>
+      </div>
+
+      <div id="promptGrid"></div>
+
+      <div class="prompts-mob-footer">
+        <div class="prompts-divider">or</div>
+        <button class="btn-surprise" id="surpriseBtn">Show me others ↻</button>
+        <button class="btn-begin" id="beginBtn" disabled>This is my story →</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── COACHING ────────────────────────────────────────── -->
+  <div id="screen-coaching" class="screen"></div>
+
+  <!-- ── REVIEW ──────────────────────────────────────── -->
+  <div id="screen-review" class="screen">
+    <div class="review-layout">
+      <div class="review-header fade-in">
+        <span class="review-step-lbl">Step 4 of 4 — Review</span>
+        <h1 class="review-title">Your story, captured.</h1>
+        <p class="review-subtitle">Here's what you shared. Read it back — this is the raw material for your final telling.</p>
+      </div>
+
+      <div id="reviewPromptCard" class="review-prompt-card fade-in" style="display:none">
+        <p class="review-prompt-lbl">Your prompt</p>
+        <p id="reviewPromptText" class="review-prompt-text"></p>
+      </div>
+
+      <div id="reviewLoading" class="review-loading">
+        <div class="review-spinner"></div>
+        <span class="review-loading-text">Loading your story…</span>
+      </div>
+
+      <div id="reviewTranscript" class="review-transcript" style="display:none">
+        <p class="review-section-lbl">Conversation</p>
+        <div id="reviewTurns"></div>
+      </div>
+
+      <div id="reviewCta" class="review-cta fade-in" style="display:none">
+        <p class="review-cta-text">Ready to shape this into your final story?</p>
+        <button class="btn-primary" id="reviewTellBtn">Prepare my telling →</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="js/story/prompt-select.js"></script>
+  <script src="js/story/coaching.js"></script>
+
+  <script>
+    // ── Screen routing ──────────────────────────────────────
+    function showScreen(id) {
+      document.querySelectorAll('.screen').forEach(s => s.classList.remove('active'));
+      document.getElementById(id).classList.add('active');
+    }
+
+    // ── Auth helpers ────────────────────────────────────────
+    let isSignUp = false;
+
+    function showAuthError(msg) {
+      ['authError', 'authErrorDt'].forEach(id => {
+        const el = document.getElementById(id);
+        if (el) { el.textContent = msg; el.classList.remove('hidden'); }
+      });
+    }
+    function clearAuthError() {
+      ['authError', 'authErrorDt'].forEach(id => {
+        const el = document.getElementById(id);
+        if (el) el.classList.add('hidden');
+      });
+    }
+
+    // Show/hide email forms
+    document.getElementById('showEmailBtn').addEventListener('click', () => {
+      document.getElementById('emailBox').classList.remove('hidden');
+      document.getElementById('showEmailBtn').style.display = 'none';
+      document.getElementById('emailInput').focus();
+    });
+    document.getElementById('showEmailBtnDt').addEventListener('click', () => {
+      document.getElementById('emailBoxDt').classList.remove('hidden');
+      document.getElementById('showEmailBtnDt').style.display = 'none';
+      document.getElementById('emailInputDt').focus();
+    });
+
+    // Toggle sign-in / sign-up
+    document.addEventListener('click', e => {
+      const isToggle = e.target.id === 'authToggleLink' || e.target.id === 'authToggleLinkDt';
+      if (!isToggle) return;
+      e.preventDefault();
+      isSignUp = !isSignUp;
+      const btnText = isSignUp ? 'Create account' : 'Sign in';
+      const toggleHtml = isSignUp
+        ? 'Already have an account? <a href="#" id="authToggleLink">Sign in</a>'
+        : 'Don\'t have an account? <a href="#" id="authToggleLink">Sign up</a>';
+      const toggleHtmlDt = isSignUp
+        ? 'Already have an account? <a href="#" id="authToggleLinkDt">Sign in</a>'
+        : 'Don\'t have an account? <a href="#" id="authToggleLinkDt">Sign up</a>';
+      document.getElementById('emailSubmitBtn').textContent = btnText;
+      document.getElementById('emailSubmitBtnDt').textContent = btnText;
+      document.getElementById('authToggle').innerHTML = toggleHtml;
+      document.getElementById('authToggleDt').innerHTML = toggleHtmlDt;
+      clearAuthError();
+    });
+
+    // Google sign-in (shared logic)
+    const GOOGLE_SVG = `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"/><path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"/><path fill="#FBBC05" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z"/><path fill="#EA4335" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z"/></svg> Continue with Google`;
+
+    async function handleGoogleSignIn(btn) {
+      btn.disabled = true;
+      btn.textContent = 'Signing in…';
+      clearAuthError();
+      try {
+        await firebase.auth().signInWithPopup(new firebase.auth.GoogleAuthProvider());
+      } catch (err) {
+        const msgs = {
+          'auth/popup-closed-by-user':    'Sign-in was cancelled.',
+          'auth/popup-blocked':           'Popup was blocked. Please allow popups for this site.',
+          'auth/cancelled-popup-request': 'Another sign-in is already in progress.',
+        };
+        showAuthError(msgs[err.code] || err.message);
+        btn.disabled = false;
+        btn.innerHTML = GOOGLE_SVG;
+      }
+    }
+    document.getElementById('googleBtn').addEventListener('click', e => handleGoogleSignIn(e.currentTarget));
+    document.getElementById('googleBtnDt').addEventListener('click', e => handleGoogleSignIn(e.currentTarget));
+
+    // Email sign-in / sign-up (shared logic)
+    async function handleEmailSubmit(email, password, btn) {
+      if (!email || !password) { showAuthError('Please enter your email and password.'); return; }
+      btn.disabled = true;
+      btn.textContent = isSignUp ? 'Creating account…' : 'Signing in…';
+      clearAuthError();
+      try {
+        if (isSignUp) {
+          await firebase.auth().createUserWithEmailAndPassword(email, password);
+        } else {
+          await firebase.auth().signInWithEmailAndPassword(email, password);
+        }
+      } catch (err) {
+        const msgs = {
+          'auth/wrong-password':       'Incorrect password.',
+          'auth/invalid-credential':   'Incorrect email or password.',
+          'auth/user-not-found':       'No account found with that email.',
+          'auth/email-already-in-use': 'An account with this email already exists.',
+          'auth/weak-password':        'Password must be at least 6 characters.',
+          'auth/invalid-email':        'Please enter a valid email address.',
+        };
+        showAuthError(msgs[err.code] || err.message);
+        btn.disabled = false;
+        btn.textContent = isSignUp ? 'Create account' : 'Sign in';
+      }
+    }
+
+    document.getElementById('emailForm').addEventListener('submit', e => {
+      e.preventDefault();
+      handleEmailSubmit(
+        document.getElementById('emailInput').value.trim(),
+        document.getElementById('passwordInput').value,
+        document.getElementById('emailSubmitBtn')
+      );
+    });
+    document.getElementById('emailFormDt').addEventListener('submit', e => {
+      e.preventDefault();
+      handleEmailSubmit(
+        document.getElementById('emailInputDt').value.trim(),
+        document.getElementById('passwordInputDt').value,
+        document.getElementById('emailSubmitBtnDt')
+      );
+    });
+
+    // ── Review screen ───────────────────────────────────────
+    async function startReview(storyId) {
+      showScreen('screen-review');
+      document.getElementById('appNav').style.display = 'flex';
+
+      const loadingEl = document.getElementById('reviewLoading');
+      const transcriptEl = document.getElementById('reviewTranscript');
+      const turnsEl = document.getElementById('reviewTurns');
+      const promptCard = document.getElementById('reviewPromptCard');
+      const promptText = document.getElementById('reviewPromptText');
+      const ctaEl = document.getElementById('reviewCta');
+
+      if (!storyId) {
+        loadingEl.innerHTML = '<p style="color:var(--muted);font-size:0.9375rem">No story ID found. Please try again from the beginning.</p>';
+        return;
+      }
+
+      try {
+        const doc = await db.collection('stories').doc(storyId).get();
+        if (!doc.exists) {
+          loadingEl.innerHTML = '<p style="color:var(--muted);font-size:0.9375rem">Story not found. It may still be saving — please refresh in a moment.</p>';
+          return;
+        }
+        const data = doc.data();
+
+        // Show prompt
+        if (data.promptText) {
+          promptText.textContent = data.promptText;
+          promptCard.style.display = '';
+        }
+
+        // Build transcript
+        const transcript = data.transcript || [];
+        if (transcript.length > 0) {
+          turnsEl.innerHTML = '';
+          transcript.forEach(turn => {
+            const isUser = turn.role === 'user';
+            const div = document.createElement('div');
+            div.className = 'transcript-turn fade-in';
+            div.innerHTML = `
+              <span class="transcript-role${isUser ? ' user-role' : ''}">${isUser ? 'You' : 'Interviewer'}</span>
+              <p class="transcript-text${isUser ? ' user-text' : ''}">${turn.text || ''}</p>
+            `;
+            turnsEl.appendChild(div);
+          });
+          loadingEl.style.display = 'none';
+          transcriptEl.style.display = '';
+        } else {
+          loadingEl.innerHTML = '<p style="color:var(--muted);font-size:0.9375rem">Your transcript is still processing. Please refresh in a moment.</p>';
+        }
+
+        ctaEl.style.display = '';
+
+        document.getElementById('reviewTellBtn').addEventListener('click', () => {
+          // Placeholder for final telling phase (not yet built)
+          document.getElementById('reviewTellBtn').textContent = 'Coming soon…';
+          document.getElementById('reviewTellBtn').disabled = true;
+        });
+
+      } catch (err) {
+        console.error('Failed to load story for review:', err);
+        loadingEl.innerHTML = '<p style="color:var(--muted);font-size:0.9375rem">Failed to load your story. Please refresh and try again.</p>';
+      }
+    }
+
+    // ── Auth state ──────────────────────────────────────────
+    firebase.auth().onAuthStateChanged(user => {
+      window.currentUser = user || null;
+      const params = new URLSearchParams(window.location.search);
+      const isCompleted = params.get('completed') === '1';
+      const storyId = params.get('storyId');
+
+      if (user) {
+        // Fire-and-forget: persist data consent preference to Firestore
+        (async () => {
+          try {
+            const consentChecked =
+              document.getElementById('consentCheck')?.checked ||
+              document.getElementById('consentCheckDt')?.checked ||
+              false;
+            const db = firebase.firestore();
+            await db.collection('users').doc(user.uid).set(
+              { dataConsent: consentChecked, dataConsentAt: firebase.firestore.FieldValue.serverTimestamp() },
+              { merge: true }
+            );
+          } catch (_) {}
+        })();
+        document.getElementById('navRight').style.display = '';
+        document.getElementById('navEmail').textContent = user.email || user.displayName || '';
+        if (isCompleted || window._pendingReview) {
+          const sid = storyId || window._pendingReview?.storyId;
+          window._pendingReview = null;
+          startReview(sid);
+        } else {
+          startPromptSelection();
+        }
+      } else {
+        document.getElementById('navRight').style.display = 'none';
+        if (isCompleted) {
+          window._pendingReview = { storyId };
+        }
+        showScreen('screen-auth');
+      }
+    });
+
+    // ── Prompt selection ────────────────────────────────────
+    function startPromptSelection() {
+      showScreen('screen-prompts');
+      PromptSelect.init();
+      PromptSelect.onChosen(async prompt => {
+        let storyId;
+        try {
+          const ref = await db.collection('stories').add({
+            userId:     window.currentUser.uid,
+            userEmail:  window.currentUser.email,
+            promptId:   prompt.id,
+            promptText: prompt.text,
+            status:     'interview',
+            warmupScenariosShown: [],
+            createdAt:  firebase.firestore.FieldValue.serverTimestamp(),
+          });
+          storyId = ref.id;
+        } catch (err) {
+          console.error('Failed to create story doc:', err);
+          storyId = null;
+        }
+        showScreen('screen-coaching');
+        Coaching.run(prompt, storyId, window.currentUser);
+      });
+    }
+  </script>
+</body>
+</html>

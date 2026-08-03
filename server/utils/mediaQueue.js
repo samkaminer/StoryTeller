@@ -5,7 +5,7 @@ const path = require('path');
 const fs = require('fs').promises;
 
 // These will be injected from the main server
-let admin, db, storage, bucket, openai, generateAndStoreReportVideo;
+let admin, db, storage, bucket, openai, generateAndStoreReportVideo, generateVideoThumbnail;
 
 // Initialize function to be called from server.js
 function initialize(firebaseAdmin, googleStorage, bucketName, openaiClient, videoModule) {
@@ -15,7 +15,8 @@ function initialize(firebaseAdmin, googleStorage, bucketName, openaiClient, vide
   bucket = storage.bucket(bucketName);
   openai = openaiClient;
   generateAndStoreReportVideo = videoModule?.generateAndStoreReportVideo;
-  
+  generateVideoThumbnail = videoModule?.generateVideoThumbnail;
+
   console.log(`[MediaQueue] Initialized with:`);
   console.log(`[MediaQueue] - Bucket name: ${bucketName}`);
   console.log(`[MediaQueue] - Storage project: ${storage.projectId}`);
@@ -35,7 +36,7 @@ function initialize(firebaseAdmin, googleStorage, bucketName, openaiClient, vide
 
 // Create a queue with concurrency limit to prevent overwhelming the system
 const mediaQueue = new Queue(async function (task, cb) {
-  const { audioBuffer, videoBuffer, audioMimeType, responseDocId, reportId, socketId } = task;
+  const { audioBuffer, videoBuffer, audioMimeType, responseDocId, reportId, socketId, storyId, isStoryFinalTelling } = task;
   
   console.log(`[MediaQueue] Processing media for response ${responseDocId}`);
   console.log(`[MediaQueue] Task details:`, {
@@ -49,7 +50,7 @@ const mediaQueue = new Queue(async function (task, cb) {
     storageProject: storage ? storage.projectId : 'NOT INITIALIZED'
   });
   
-  let audioPath, videoPath, convertedAudioPath, convertedVideoPath;
+  let audioPath, videoPath, convertedAudioPath, convertedVideoPath, thumbnailPath;
   
   try {
     // Check if storage is initialized
@@ -101,11 +102,17 @@ const mediaQueue = new Queue(async function (task, cb) {
     });
     
     // Get media info for debugging
+    let videoWidth = 0, videoHeight = 0;
     await new Promise((resolve) => {
       ffmpeg.ffprobe(videoPath, (err, metadata) => {
         if (err) {
           console.error(`[MediaQueue] ffprobe error:`, err);
         } else {
+          const videoStream = metadata.streams.find(s => s.codec_type === 'video');
+          if (videoStream) {
+            videoWidth = videoStream.width || 0;
+            videoHeight = videoStream.height || 0;
+          }
           console.log(`[MediaQueue] Video metadata:`, JSON.stringify({
             format: metadata.format.format_name,
             duration: metadata.format.duration,
@@ -170,15 +177,24 @@ const mediaQueue = new Queue(async function (task, cb) {
     if (videoBuffer && videoBuffer.length > 0) {
       // Step 3: Convert video (remove audio track)
       const tempVideoNoAudio = videoPath.replace(/\.[^.]+$/, '_no_audio.mp4');
+      const isLandscape = isStoryFinalTelling && videoWidth > 0 && videoHeight > 0 && videoWidth > videoHeight;
+      if (isLandscape) {
+        console.log(`[MediaQueue] Story final telling: landscape detected (${videoWidth}x${videoHeight}), applying 9:16 center-crop`);
+      }
       await new Promise((resolve, reject) => {
-        ffmpeg(videoPath)
-          .outputOptions([
-            '-an', 
-            '-c:v libx264', 
-            '-preset ultrafast', // Changed from 'fast' to 'ultrafast' for local dev
-            '-crf 28', // Slightly lower quality for faster processing
-            '-threads 0' // Use all available CPU threads
-          ])
+        const cmd = ffmpeg(videoPath);
+        const outputOpts = [
+          '-an',
+          '-c:v libx264',
+          '-preset ultrafast',
+          '-crf 28',
+          '-threads 0'
+        ];
+        if (isLandscape) {
+          cmd.videoFilters('crop=ih*9/16:ih:(iw-ih*9/16)/2:0');
+        }
+        cmd
+          .outputOptions(outputOpts)
           .output(tempVideoNoAudio)
           .on('start', (commandLine) => {
             console.log(`[MediaQueue] Video FFmpeg command: ${commandLine}`);
@@ -226,6 +242,18 @@ const mediaQueue = new Queue(async function (task, cb) {
       
       // Clean up temp video file
       await fs.unlink(tempVideoNoAudio).catch(() => {});
+
+      // Generate thumbnail for story final tellings
+      if (isStoryFinalTelling && generateVideoThumbnail) {
+        try {
+          thumbnailPath = convertedVideoPath.replace(/\.mp4$/, '_thumb.jpg');
+          await generateVideoThumbnail(convertedVideoPath, thumbnailPath, 2);
+          console.log(`[MediaQueue] Thumbnail generated for story final telling`);
+        } catch (thumbErr) {
+          console.warn(`[MediaQueue] Thumbnail generation failed (non-fatal):`, thumbErr.message);
+          thumbnailPath = null;
+        }
+      }
     } else {
       console.log(`[MediaQueue] No video data provided, processing audio only`);
     }
@@ -308,7 +336,27 @@ const mediaQueue = new Queue(async function (task, cb) {
     
     const audioUrl = `gs://${bucket.name}/${audioDestination}`;
     const videoUrl = videoFileStats ? `gs://${bucket.name}/${videoDestination}` : null;
-    
+
+    // Upload thumbnail if generated
+    let thumbnailUrl = null;
+    if (thumbnailPath) {
+      try {
+        const thumbnailStats = await fs.stat(thumbnailPath).catch(() => null);
+        if (thumbnailStats) {
+          const thumbnailDestination = `story_thumbnails/${reportId}/${responseDocId}.jpg`;
+          await bucket.upload(thumbnailPath, {
+            destination: thumbnailDestination,
+            metadata: { contentType: 'image/jpeg' },
+            resumable: false,
+          });
+          thumbnailUrl = `gs://${bucket.name}/${thumbnailDestination}`;
+          console.log(`[MediaQueue] Thumbnail uploaded: ${thumbnailUrl}`);
+        }
+      } catch (thumbUploadErr) {
+        console.warn(`[MediaQueue] Thumbnail upload failed (non-fatal):`, thumbUploadErr.message);
+      }
+    }
+
     // Step 6: Update Firestore
     const updateData = {
       audio_gcs_url: audioUrl,
@@ -322,7 +370,60 @@ const mediaQueue = new Queue(async function (task, cb) {
     await db.collection('reports').doc(reportId)
       .collection('responses').doc(responseDocId)
       .update(updateData);
-    
+
+    await db.collection('reports').doc(reportId).update({
+      take_response_doc_id: responseDocId,
+      take_audio_gcs_url: audioUrl,
+      take_video_gcs_url: videoUrl || null,
+      take_thumbnail_gcs_url: thumbnailUrl || null,
+      take_media_processed_at: admin.firestore.FieldValue.serverTimestamp(),
+      take_media_processing_error: null,
+      take_media_processing_failed_at: null,
+      take_media_status: videoUrl ? 'ready' : 'audio_ready',
+    });
+
+    // Update stories doc with final video and thumbnail for story final tellings
+    if (isStoryFinalTelling && storyId && videoUrl && db) {
+      try {
+        const storyUpdate = { final_video_gcs: videoUrl };
+        if (thumbnailUrl) storyUpdate.thumbnail_gcs = thumbnailUrl;
+        await db.collection('stories').doc(storyId).update(storyUpdate);
+        console.log(`[MediaQueue] Updated stories/${storyId} with final_video_gcs${thumbnailUrl ? ' and thumbnail_gcs' : ''}`);
+
+        // Send story completion email (non-fatal)
+        try {
+          const EmailService = require('../services/email-service');
+          const storySnap = await db.collection('stories').doc(storyId).get();
+          const storyData = storySnap.data() || {};
+          if (storyData.userEmail) {
+            const baseUrl = process.env.BASE_URL || 'http://localhost:3001';
+            let thumbSignedUrl = null;
+            if (thumbnailUrl) {
+              try {
+                const thumbPath = thumbnailUrl.replace(`gs://${bucket.name}/`, '');
+                const [tUrl] = await bucket.file(thumbPath).getSignedUrl({
+                  version: 'v4', action: 'read', expires: Date.now() + 7 * 24 * 60 * 60 * 1000,
+                });
+                thumbSignedUrl = tUrl;
+              } catch (_) {}
+            }
+            await EmailService.sendStoryComplete({
+              to: storyData.userEmail,
+              userName: storyData.userName || null,
+              thumbnailUrl: thumbSignedUrl,
+              watchUrl: `${baseUrl}/story-result.html?storyId=${encodeURIComponent(storyId)}`,
+              archiveUrl: `${baseUrl}/story-archive.html`,
+            });
+            console.log(`[MediaQueue] Story completion email sent to ${storyData.userEmail}`);
+          }
+        } catch (emailErr) {
+          console.warn(`[MediaQueue] Story completion email failed (non-fatal):`, emailErr.message);
+        }
+      } catch (storyErr) {
+        console.warn(`[MediaQueue] Failed to update stories doc (non-fatal):`, storyErr.message);
+      }
+    }
+
     console.log(`[MediaQueue] Successfully processed media for ${responseDocId}`);
     
     // Emit success event if socket still connected
@@ -344,8 +445,9 @@ const mediaQueue = new Queue(async function (task, cb) {
     
     if (videoBuffer && videoBuffer.length > 0) {
       filesToClean.push(videoPath, convertedVideoPath);
+      if (thumbnailPath) filesToClean.push(thumbnailPath);
     }
-    
+
     await Promise.all(
       filesToClean.map(file => fs.unlink(file).catch(() => {}))
     );
@@ -371,6 +473,12 @@ const mediaQueue = new Queue(async function (task, cb) {
           mediaProcessingError: error.message,
           mediaProcessingFailedAt: admin.firestore.FieldValue.serverTimestamp()
         });
+      await db.collection('reports').doc(reportId).update({
+        take_response_doc_id: responseDocId,
+        take_media_processing_error: error.message,
+        take_media_processing_failed_at: admin.firestore.FieldValue.serverTimestamp(),
+        take_media_status: 'failed',
+      });
     } catch (dbError) {
       console.error('[MediaQueue] Failed to update error status:', dbError);
     }
@@ -393,7 +501,8 @@ const mediaQueue = new Queue(async function (task, cb) {
     
     if (videoPath) filesToClean.push(videoPath);
     if (convertedVideoPath) filesToClean.push(convertedVideoPath);
-    
+    if (thumbnailPath) filesToClean.push(thumbnailPath);
+
     await Promise.all(
       filesToClean.map(file => fs.unlink(file).catch(() => {}))
     );

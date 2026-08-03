@@ -310,6 +310,13 @@ function prepareInterviewData() {
         console.log('Using interview ID from URL:', interviewData.interviewId);
     }
     
+    // Pass storyId so server can detect story mode on stopInterview
+    const storyId = urlParams.get('storyId');
+    if (storyId) {
+        interviewData.storyId = storyId;
+        interviewData.mode = 'story';
+    }
+
     // Add custom first question if provided via URL parameter
     if (state.customFirstQuestion) {
         interviewData.prompt = state.customFirstQuestion;

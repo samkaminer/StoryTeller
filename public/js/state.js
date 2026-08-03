@@ -36,6 +36,7 @@ export const state = {
     // Audio state
     audio: {
         mediaRecorder: null,
+        stream: null,
         chunks: [],
         recordedBlob: null,
         pendingData: null

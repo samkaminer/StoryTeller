@@ -1,0 +1,2144 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>StoryTeller — Your Story</title>
+  <link rel="icon" type="image/png" href="/saylogo.png">
+
+  <script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-auth-compat.js"></script>
+  <script src="js/firebase-config.js"></script>
+
+  <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,400;0,500;0,700;1,400;1,500&family=Inter:wght@300;400;500&display=swap" rel="stylesheet">
+
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --bg:      #F3EDD8;
+      --bg-card: #EAE3CC;
+      --text:    #1C1610;
+      --muted:   #7A6E5B;
+      --border:  #D9D0B8;
+      --ink:     #2C3C6A;
+      --fd:      'Playfair Display', Georgia, serif;
+      --fu:      'Inter', system-ui, sans-serif;
+      --nav:     56px;
+    }
+
+    html, body { height: 100%; background: var(--bg); color: var(--text); font-family: var(--fu); -webkit-font-smoothing: antialiased; overflow-x: hidden; }
+
+    @keyframes fadeUp { from { opacity: 0; transform: translateY(12px); } to { opacity: 1; transform: translateY(0); } }
+    .fade-in { animation: fadeUp 0.4s ease both; }
+    @keyframes pulse { 0%, 100% { opacity: 0.3; transform: scale(0.8); } 50% { opacity: 1; transform: scale(1); } }
+
+    /* ── NAV ─────────────────────────────────────────────────── */
+    .app-nav {
+      position: fixed; top: 0; left: 0; right: 0;
+      height: var(--nav);
+      padding: 0 2rem;
+      display: flex; align-items: center; justify-content: space-between;
+      background: var(--bg);
+      border-bottom: 1px solid var(--border);
+      z-index: 100;
+    }
+    .nav-mark { font-family: var(--fd); font-weight: 700; font-size: 1.0625rem; letter-spacing: -0.01em; }
+    .nav-right { display: flex; align-items: center; gap: 1.25rem; }
+    .nav-link { font-size: 0.875rem; color: var(--muted); text-decoration: none; background: none; border: none; cursor: pointer; transition: color 0.15s; font-family: var(--fu); }
+    .nav-link:hover { color: var(--text); }
+
+    /* ── VIEWS ───────────────────────────────────────────────── */
+    .view {
+      display: none;
+      min-height: 100dvh;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      padding: calc(var(--nav) + 2rem) 1.5rem 4rem;
+    }
+    .view.active { display: flex; }
+
+    /* ── LOADING / PROCESSING ────────────────────────────────── */
+    .page-hl { font-family: var(--fd); font-style: italic; font-size: 1.75rem; font-weight: 400; letter-spacing: -0.02em; margin-bottom: 0.75rem; text-align: center; }
+    .page-sub { font-size: 0.9375rem; color: var(--muted); line-height: 1.65; text-align: center; max-width: 340px; margin-bottom: 2rem; }
+    .pulse-dots { display: flex; gap: 0.5rem; margin-top: 2.5rem; align-items: center; justify-content: center; }
+    .pulse-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--ink); opacity: 0.3; animation: pulse 1.4s ease-in-out infinite; }
+    .pulse-dot:nth-child(2) { animation-delay: 0.2s; }
+    .pulse-dot:nth-child(3) { animation-delay: 0.4s; }
+
+    /* ── RESULT ──────────────────────────────────────────────── */
+    .result-inner {
+      width: 100%; max-width: 400px;
+      display: flex; flex-direction: column; align-items: center;
+      gap: 1.5rem;
+    }
+
+    .video-wrap {
+      width: 100%; max-width: 300px;
+      aspect-ratio: 9 / 16;
+      border-radius: 16px;
+      overflow: hidden;
+      background: #1C1610;
+      flex-shrink: 0;
+    }
+    .video-wrap video { width: 100%; height: 100%; object-fit: cover; display: block; }
+
+    .take-section {
+      width: 100%;
+      max-width: 320px;
+      display: none;
+      flex-direction: column;
+      gap: 0.75rem;
+      align-items: stretch;
+    }
+    .take-section.active { display: flex; }
+    .take-label {
+      font-size: 0.6875rem; font-weight: 500; letter-spacing: 0.1em;
+      text-transform: uppercase; color: var(--ink); text-align: center;
+    }
+    .take-list {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.625rem;
+      justify-content: center;
+    }
+    .take-btn {
+      min-width: 112px;
+      padding: 0.75rem 0.9rem;
+      border-radius: 14px;
+      border: 1px solid var(--border);
+      background: var(--bg-card);
+      color: var(--text);
+      cursor: pointer;
+      transition: border-color 0.15s, transform 0.15s, background 0.15s;
+      display: flex;
+      flex-direction: column;
+      gap: 0.2rem;
+      align-items: flex-start;
+      text-align: left;
+      font-family: var(--fu);
+    }
+    .take-btn:hover { border-color: var(--muted); transform: translateY(-1px); }
+    .take-btn.active {
+      background: #E2D8BA;
+      border-color: var(--ink);
+    }
+    .take-btn-title {
+      font-size: 0.9375rem;
+      font-weight: 500;
+      color: var(--text);
+    }
+    .take-btn-meta {
+      font-size: 0.75rem;
+      color: var(--muted);
+    }
+
+    .prompt-text {
+      font-family: var(--fd); font-style: italic; font-size: 1rem;
+      color: var(--muted); text-align: center; line-height: 1.55;
+      max-width: 320px;
+    }
+
+    /* ── PUBLISH + SHARE ─────────────────────────────────────── */
+    .hidden { display: none !important; }
+    .share-label {
+      font-size: 0.6875rem; font-weight: 500; letter-spacing: 0.1em;
+      text-transform: uppercase; color: var(--ink);
+      text-align: center;
+    }
+    .publish-section,
+    .manual-share-section {
+      width: 100%;
+      max-width: 320px;
+      display: flex;
+      flex-direction: column;
+      gap: 0.9rem;
+    }
+    .publish-sub {
+      font-size: 0.8125rem;
+      color: var(--muted);
+      text-align: center;
+      line-height: 1.5;
+    }
+    .publish-grid {
+      display: grid;
+      gap: 0.85rem;
+    }
+    .publish-card {
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: 18px;
+      padding: 1rem;
+      display: flex;
+      flex-direction: column;
+      gap: 0.85rem;
+      box-shadow: 0 10px 20px rgba(28, 22, 16, 0.04);
+    }
+    .publish-card-head {
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 0.75rem;
+    }
+    .publish-card-title {
+      font-family: var(--fd);
+      font-size: 1rem;
+      letter-spacing: -0.01em;
+    }
+    .publish-card-summary {
+      font-size: 0.84rem;
+      color: var(--text);
+      line-height: 1.45;
+    }
+    .publish-card-meta,
+    .publish-card-status-text {
+      font-size: 0.78rem;
+      color: var(--muted);
+      line-height: 1.45;
+    }
+    .publish-card-status {
+      display: flex;
+      flex-direction: column;
+      gap: 0.45rem;
+      padding-top: 0.75rem;
+      border-top: 1px solid rgba(217, 208, 184, 0.9);
+    }
+    .publish-badge {
+      display: inline-flex;
+      align-items: center;
+      align-self: flex-start;
+      padding: 0.28rem 0.6rem;
+      border-radius: 999px;
+      border: 1px solid var(--border);
+      font-size: 0.6875rem;
+      font-weight: 600;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      background: rgba(255, 255, 255, 0.35);
+      color: var(--text);
+    }
+    .publish-badge.pending,
+    .publish-badge.processing {
+      border-color: #7A6E5B;
+      background: rgba(122, 110, 91, 0.12);
+      color: #55493B;
+    }
+    .publish-badge.success {
+      border-color: #668455;
+      background: rgba(102, 132, 85, 0.12);
+      color: #446137;
+    }
+    .publish-badge.error {
+      border-color: #8C3B2A;
+      background: rgba(140, 59, 42, 0.12);
+      color: #8C3B2A;
+    }
+    .publish-badge.warning {
+      border-color: #A97828;
+      background: rgba(169, 120, 40, 0.12);
+      color: #7F5A17;
+    }
+    .publish-card-btn {
+      width: 100%;
+      padding: 0.85rem 1rem;
+      border: none;
+      border-radius: 999px;
+      background: var(--ink);
+      color: #fff;
+      font-family: var(--fu);
+      font-size: 0.95rem;
+      font-weight: 500;
+      cursor: pointer;
+      transition: opacity 0.15s, transform 0.15s;
+    }
+    .publish-card-btn:hover { opacity: 0.88; transform: translateY(-1px); }
+    .publish-card-btn:disabled {
+      opacity: 0.55;
+      cursor: not-allowed;
+      transform: none;
+    }
+    .publish-card-btn.secondary {
+      background: transparent;
+      color: var(--text);
+      border: 1px solid var(--border);
+    }
+    .publish-feedback,
+    .share-help {
+      min-height: 1.2rem;
+      font-size: 0.78rem;
+      color: var(--muted);
+      text-align: center;
+      line-height: 1.45;
+    }
+    .publish-feedback.error,
+    .share-help.error { color: #8C3B2A; }
+    .publish-feedback.success { color: #446137; }
+    .publish-history {
+      width: 100%;
+      max-width: 320px;
+      display: flex;
+      flex-direction: column;
+      gap: 0.9rem;
+    }
+    .publish-history-list {
+      display: grid;
+      gap: 0.7rem;
+    }
+    .publish-history-item,
+    .publish-history-empty {
+      background: rgba(234, 227, 204, 0.55);
+      border: 1px solid rgba(217, 208, 184, 0.9);
+      border-radius: 16px;
+      padding: 0.95rem 1rem;
+      display: flex;
+      flex-direction: column;
+      gap: 0.65rem;
+    }
+    .publish-history-row {
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 0.75rem;
+    }
+    .publish-history-platform {
+      font-family: var(--fd);
+      font-size: 0.98rem;
+      letter-spacing: -0.01em;
+    }
+    .publish-history-meta,
+    .publish-history-reason {
+      font-size: 0.77rem;
+      color: var(--muted);
+      line-height: 1.45;
+    }
+    .publish-history-reason {
+      color: #8C3B2A;
+    }
+    .publish-history-actions {
+      display: flex;
+      justify-content: flex-end;
+    }
+    .publish-history-retry {
+      padding: 0.55rem 0.9rem;
+      border-radius: 999px;
+      border: 1px solid var(--border);
+      background: transparent;
+      color: var(--text);
+      font-family: var(--fu);
+      font-size: 0.8rem;
+      cursor: pointer;
+      transition: border-color 0.15s, color 0.15s;
+    }
+    .publish-history-retry:hover {
+      border-color: var(--text);
+      color: var(--text);
+    }
+    .publish-history-retry:disabled {
+      opacity: 0.55;
+      cursor: not-allowed;
+    }
+    .publish-history-empty {
+      color: var(--muted);
+      font-size: 0.8rem;
+      line-height: 1.5;
+      text-align: center;
+    }
+    .manual-share-header {
+      display: flex;
+      flex-direction: column;
+      gap: 0.35rem;
+      align-items: center;
+    }
+    .manual-share-sub {
+      font-size: 0.78rem;
+      color: var(--muted);
+      text-align: center;
+      line-height: 1.45;
+    }
+    .share-row {
+      display: flex; gap: 0.75rem; align-items: center; justify-content: center;
+      flex-wrap: wrap;
+    }
+    .share-btn {
+      width: 44px; height: 44px;
+      border-radius: 50%;
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      display: flex; align-items: center; justify-content: center;
+      cursor: pointer; text-decoration: none; color: var(--text);
+      transition: background 0.15s, border-color 0.15s;
+      flex-shrink: 0;
+    }
+    .share-btn:hover { background: var(--border); border-color: var(--muted); }
+    .share-btn svg { display: block; }
+    .copy-btn { position: relative; }
+    .copy-toast {
+      position: absolute; bottom: calc(100% + 6px); left: 50%;
+      transform: translateX(-50%);
+      background: var(--text); color: var(--bg);
+      font-size: 0.75rem; padding: 0.3rem 0.6rem;
+      border-radius: 6px; white-space: nowrap;
+      opacity: 0; pointer-events: none;
+      transition: opacity 0.2s;
+    }
+    .copy-toast.show { opacity: 1; }
+
+    /* ── RETAKE ──────────────────────────────────────────────── */
+    .retake-section { width: 100%; max-width: 320px; text-align: center; }
+    .btn-retake {
+      display: block; width: 100%;
+      padding: 0.875rem 1.5rem;
+      background: transparent; color: var(--muted);
+      border: 1px solid var(--border); border-radius: 100px;
+      font-family: var(--fu); font-size: 0.9375rem;
+      cursor: pointer; text-align: center;
+      transition: color 0.15s, border-color 0.15s;
+    }
+    .btn-retake:hover { color: var(--text); border-color: var(--text); }
+
+    /* ── OVERLAY ─────────────────────────────────────────────── */
+    .overlay {
+      position: fixed; inset: 0;
+      background: rgba(28, 22, 16, 0.75);
+      display: flex; align-items: center; justify-content: center;
+      z-index: 200;
+      opacity: 1; transition: opacity 0.2s;
+    }
+    .overlay.hidden { display: none; }
+    .overlay-card {
+      background: var(--bg); border-radius: 20px;
+      padding: 2.5rem 2rem; max-width: 320px; width: 90%;
+      text-align: center;
+    }
+    .overlay-hl {
+      font-family: var(--fd); font-style: italic; font-size: 1.5rem;
+      font-weight: 400; letter-spacing: -0.02em;
+      margin-bottom: 0.75rem; line-height: 1.3;
+    }
+    .overlay-sub { font-size: 0.9rem; color: var(--muted); line-height: 1.55; margin-bottom: 2rem; }
+    .btn-cta {
+      display: block; width: 100%;
+      padding: 1rem 1.5rem;
+      background: var(--ink); color: #fff; border: none; border-radius: 100px;
+      font-family: var(--fu); font-size: 1rem; font-weight: 500;
+      cursor: pointer; text-align: center; text-decoration: none;
+      transition: opacity 0.15s; margin-bottom: 0.75rem;
+    }
+    .btn-cta:hover { opacity: 0.85; }
+    .overlay-cancel { font-size: 0.875rem; color: var(--muted); background: none; border: none; cursor: pointer; text-decoration: underline; }
+    .overlay-cancel:hover { color: var(--text); }
+
+    /* ── PUBLISH MODAL ───────────────────────────────────────── */
+    .modal-overlay {
+      position: fixed;
+      inset: 0;
+      background: rgba(28, 22, 16, 0.75);
+      z-index: 240;
+      display: flex;
+      align-items: flex-end;
+      justify-content: center;
+      padding: 1rem;
+    }
+    .publish-modal {
+      width: min(100%, 420px);
+      max-height: calc(100dvh - 2rem);
+      overflow: auto;
+      background: var(--bg);
+      border-radius: 24px 24px 18px 18px;
+      padding: 1.25rem 1.25rem 1.5rem;
+      display: flex;
+      flex-direction: column;
+      gap: 1rem;
+      box-shadow: 0 24px 64px rgba(28, 22, 16, 0.24);
+    }
+    .publish-modal-header {
+      display: flex;
+      justify-content: space-between;
+      gap: 1rem;
+      align-items: flex-start;
+    }
+    .publish-modal-kicker {
+      font-size: 0.6875rem;
+      font-weight: 600;
+      letter-spacing: 0.1em;
+      text-transform: uppercase;
+      color: var(--ink);
+      margin-bottom: 0.3rem;
+    }
+    .publish-close {
+      width: 40px;
+      height: 40px;
+      border-radius: 50%;
+      border: 1px solid var(--border);
+      background: var(--bg-card);
+      color: var(--text);
+      font-size: 1.25rem;
+      line-height: 1;
+      cursor: pointer;
+      flex-shrink: 0;
+    }
+    .publish-preview {
+      display: grid;
+      grid-template-columns: 88px 1fr;
+      gap: 0.85rem;
+      align-items: center;
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: 18px;
+      padding: 0.8rem;
+    }
+    .publish-preview video {
+      width: 100%;
+      aspect-ratio: 9 / 16;
+      border-radius: 14px;
+      object-fit: cover;
+      background: #1C1610;
+      display: block;
+    }
+    .publish-preview-title {
+      font-family: var(--fd);
+      font-size: 1rem;
+      line-height: 1.3;
+    }
+    .publish-preview-meta {
+      margin-top: 0.25rem;
+      font-size: 0.8rem;
+      color: var(--muted);
+      line-height: 1.45;
+    }
+    .publish-status-panel {
+      border-radius: 16px;
+      border: 1px solid var(--border);
+      background: rgba(234, 227, 204, 0.7);
+      padding: 0.85rem 0.9rem;
+      display: flex;
+      flex-direction: column;
+      gap: 0.45rem;
+    }
+    .publish-field {
+      display: flex;
+      flex-direction: column;
+      gap: 0.45rem;
+    }
+    .publish-field label,
+    .publish-field-title {
+      font-size: 0.82rem;
+      font-weight: 600;
+      color: var(--text);
+    }
+    .publish-input,
+    .publish-textarea {
+      width: 100%;
+      border-radius: 14px;
+      border: 1px solid var(--border);
+      background: rgba(255, 255, 255, 0.55);
+      color: var(--text);
+      font-family: var(--fu);
+      font-size: 0.95rem;
+      padding: 0.85rem 0.95rem;
+    }
+    .publish-textarea {
+      min-height: 112px;
+      resize: vertical;
+      line-height: 1.5;
+    }
+    .publish-caption-meta {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 0.75rem;
+      font-size: 0.75rem;
+      color: var(--muted);
+    }
+    .publish-option {
+      display: flex;
+      gap: 0.55rem;
+      align-items: flex-start;
+      font-size: 0.84rem;
+      color: var(--text);
+      line-height: 1.45;
+    }
+    .publish-option input {
+      margin-top: 0.18rem;
+      accent-color: var(--ink);
+    }
+    .publish-option-stack {
+      display: flex;
+      flex-direction: column;
+      gap: 0.65rem;
+    }
+    .publish-disclosure {
+      border-radius: 16px;
+      border: 1px solid var(--border);
+      background: rgba(226, 216, 186, 0.5);
+      padding: 0.85rem 0.95rem;
+      font-size: 0.78rem;
+      color: var(--muted);
+      line-height: 1.5;
+    }
+    .publish-submit-btn {
+      margin-top: 0.2rem;
+    }
+
+    /* ── ERROR ───────────────────────────────────────────────── */
+    #view-error .page-sub a { color: var(--ink); }
+
+    @media (min-width: 640px) {
+      .video-wrap { max-width: 240px; }
+      .modal-overlay { align-items: center; }
+      .publish-modal { border-radius: 24px; }
+    }
+  </style>
+</head>
+<body>
+
+  <nav class="app-nav">
+    <span class="nav-mark">StoryTeller</span>
+    <div class="nav-right">
+      <a href="/story-archive.html" class="nav-link">My archive</a>
+      <button class="nav-link" id="signOutBtn">Sign out</button>
+    </div>
+  </nav>
+
+  <!-- Loading -->
+  <div id="view-loading" class="view active">
+    <h1 class="page-hl">Loading your story…</h1>
+    <div class="pulse-dots">
+      <div class="pulse-dot"></div>
+      <div class="pulse-dot"></div>
+      <div class="pulse-dot"></div>
+    </div>
+  </div>
+
+  <!-- Processing (video not yet ready) -->
+  <div id="view-processing" class="view">
+    <h1 class="page-hl">Your story is processing…</h1>
+    <p class="page-sub" id="processingMessage">We're finishing up your video. This usually takes less than a minute.</p>
+    <div class="pulse-dots">
+      <div class="pulse-dot"></div>
+      <div class="pulse-dot"></div>
+      <div class="pulse-dot"></div>
+    </div>
+  </div>
+
+  <!-- Result -->
+  <div id="view-result" class="view fade-in">
+    <div class="result-inner">
+      <div class="video-wrap">
+        <video id="storyVideo" controls playsinline preload="metadata"></video>
+      </div>
+
+      <div class="take-section" id="takeSection">
+        <p class="take-label">Choose a take</p>
+        <div class="take-list" id="takeList"></div>
+      </div>
+
+      <p class="prompt-text" id="promptText"></p>
+
+      <div class="publish-section">
+        <p class="share-label" id="publishLabel">Publish this take</p>
+        <p class="publish-sub">Send the selected take to your connected short-form accounts. Manual sharing stays available below.</p>
+
+        <div class="publish-grid">
+          <article class="publish-card" id="tiktokPublishCard">
+            <div class="publish-card-head">
+              <h3 class="publish-card-title">TikTok</h3>
+              <span class="publish-badge" id="tiktokPublishBadge">Not connected</span>
+            </div>
+            <button class="publish-card-btn" id="tiktokPublishActionBtn" type="button">Connect</button>
+          </article>
+
+          <article class="publish-card" id="instagramPublishCard">
+            <div class="publish-card-head">
+              <h3 class="publish-card-title">Instagram Reels</h3>
+              <span class="publish-badge" id="instagramPublishBadge">Not connected</span>
+            </div>
+            <button class="publish-card-btn" id="instagramPublishActionBtn" type="button">Connect</button>
+          </article>
+        </div>
+
+        <p class="publish-feedback" id="publishFeedback"></p>
+      </div>
+
+      <div class="publish-history">
+        <p class="share-label" id="publishHistoryLabel">Publish history for this take</p>
+        <div class="publish-history-list" id="publishHistoryList">
+          <div class="publish-history-empty">Choose a take to see where it has been published.</div>
+        </div>
+      </div>
+
+      <div class="manual-share-section">
+        <div class="manual-share-header">
+          <p class="share-label" id="shareLabel">Manual share fallback</p>
+          <p class="manual-share-sub">Use direct share links or download the selected take if you want to post it yourself.</p>
+        </div>
+        <div class="share-row">
+
+          <!-- Copy link -->
+          <button class="share-btn copy-btn" id="copyBtn" aria-label="Copy link" title="Copy link">
+            <span class="copy-toast" id="copyToast">Copied!</span>
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
+              <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
+            </svg>
+          </button>
+
+          <!-- X / Twitter -->
+          <a class="share-btn" id="twitterBtn" href="#" target="_blank" rel="noopener" aria-label="Share on X" title="Share on X">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor">
+              <path d="M18.244 2.25h3.308l-7.227 8.26 8.502 11.24H16.17l-5.214-6.817L4.99 21.75H1.68l7.73-8.835L1.254 2.25H8.08l4.713 6.231zm-1.161 17.52h1.833L7.084 4.126H5.117z"/>
+            </svg>
+          </a>
+
+          <!-- Facebook -->
+          <a class="share-btn" id="facebookBtn" href="#" target="_blank" rel="noopener" aria-label="Share on Facebook" title="Share on Facebook">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor">
+              <path d="M24 12.073c0-6.627-5.373-12-12-12s-12 5.373-12 12c0 5.99 4.388 10.954 10.125 11.854v-8.385H7.078v-3.47h3.047V9.43c0-3.007 1.792-4.669 4.533-4.669 1.312 0 2.686.235 2.686.235v2.953H15.83c-1.491 0-1.956.925-1.956 1.874v2.25h3.328l-.532 3.47h-2.796v8.385C19.612 23.027 24 18.062 24 12.073z"/>
+            </svg>
+          </a>
+
+          <!-- WhatsApp -->
+          <a class="share-btn" id="whatsappBtn" href="#" target="_blank" rel="noopener" aria-label="Share on WhatsApp" title="Share on WhatsApp">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor">
+              <path d="M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52.149-.174.198-.298.298-.497.099-.198.05-.371-.025-.52-.075-.149-.669-1.612-.916-2.207-.242-.579-.487-.5-.669-.51-.173-.008-.371-.01-.57-.01-.198 0-.52.074-.792.372-.272.297-1.04 1.016-1.04 2.479 0 1.462 1.065 2.875 1.213 3.074.149.198 2.096 3.2 5.077 4.487.709.306 1.262.489 1.694.625.712.227 1.36.195 1.871.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413-.074-.124-.272-.198-.57-.347m-5.421 7.403h-.004a9.87 9.87 0 01-5.031-1.378l-.361-.214-3.741.982.998-3.648-.235-.374a9.86 9.86 0 01-1.51-5.26c.001-5.45 4.436-9.884 9.888-9.884 2.64 0 5.122 1.03 6.988 2.898a9.825 9.825 0 012.893 6.994c-.003 5.45-4.437 9.884-9.885 9.884m8.413-18.297A11.815 11.815 0 0012.05 0C5.495 0 .16 5.335.157 11.892c0 2.096.547 4.142 1.588 5.945L.057 24l6.305-1.654a11.882 11.882 0 005.683 1.448h.005c6.554 0 11.89-5.335 11.893-11.893a11.821 11.821 0 00-3.48-8.413Z"/>
+            </svg>
+          </a>
+
+          <!-- Download -->
+          <a class="share-btn" id="downloadBtn" href="#" download="my-story.mp4" aria-label="Download video" title="Download video">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+              <polyline points="7 10 12 15 17 10"></polyline>
+              <line x1="12" y1="15" x2="12" y2="3"></line>
+            </svg>
+          </a>
+
+        </div>
+        <p class="share-help" id="shareHelp"></p>
+      </div>
+
+      <!-- Retake (shown once) -->
+      <div class="retake-section" id="retakeSection">
+        <button class="btn-retake" id="retakeBtn">Record a new take</button>
+      </div>
+
+    </div>
+  </div>
+
+  <!-- Error -->
+  <div id="view-error" class="view">
+    <h1 class="page-hl">Something went wrong</h1>
+    <p class="page-sub" id="errorMessage">We couldn't load your story. <a href="/story.html">Return home</a></p>
+  </div>
+
+  <!-- Retake friction overlay -->
+  <div id="retakeOverlay" class="overlay hidden">
+    <div class="overlay-card fade-in">
+      <h2 class="overlay-hl">One more take.<br>Make it count.</h2>
+      <p class="overlay-sub">Your current recording will stay saved. After this take, you’ll be able to choose which version to share.</p>
+      <a id="retakeConfirmBtn" href="#" class="btn-cta">Record again →</a>
+      <button class="overlay-cancel" id="retakeCancelBtn">Actually, I'm done</button>
+    </div>
+  </div>
+
+  <div id="publishOverlay" class="modal-overlay hidden">
+    <div class="publish-modal fade-in" role="dialog" aria-modal="true" aria-labelledby="publishModalTitle">
+      <div class="publish-modal-header">
+        <div>
+          <p class="publish-modal-kicker" id="publishModalKicker">Publish</p>
+          <h2 class="overlay-hl" id="publishModalTitle">Publish this take</h2>
+        </div>
+        <button class="publish-close" id="publishCloseBtn" type="button" aria-label="Close publish drawer">×</button>
+      </div>
+
+      <div class="publish-preview">
+        <video id="publishPreviewVideo" muted playsinline loop preload="metadata"></video>
+        <div>
+          <p class="publish-preview-title" id="publishPreviewTitle">Selected take</p>
+          <p class="publish-preview-meta" id="publishPreviewMeta">The selected take is the immutable publish source for this platform.</p>
+        </div>
+      </div>
+
+      <div class="publish-status-panel hidden" id="publishStatusPanel">
+        <span class="publish-badge" id="publishStatusBadge">Queued</span>
+        <p class="publish-card-status-text" id="publishStatusText"></p>
+      </div>
+
+      <div class="publish-field">
+        <label for="publishCaptionInput">Caption</label>
+        <textarea class="publish-textarea" id="publishCaptionInput" maxlength="2200" placeholder="Add a caption for this publish action."></textarea>
+        <div class="publish-caption-meta">
+          <span id="publishCaptionHint">For Instagram, this caption is submitted with the Reel.</span>
+          <span id="publishCaptionCount">0 / 2200</span>
+        </div>
+      </div>
+
+      <div class="publish-field hidden" id="instagramOptionsGroup">
+        <span class="publish-field-title">Reel options</span>
+        <label class="publish-option">
+          <input type="checkbox" id="instagramShareToFeedInput" checked>
+          <span>Also share this Reel to the Instagram feed.</span>
+        </label>
+        <div class="publish-option-stack">
+          <label class="publish-option">
+            <input type="radio" name="instagramCoverMode" value="default" checked>
+            <span>Let Instagram choose the cover frame.</span>
+          </label>
+          <label class="publish-option" id="instagramThumbnailCoverOption">
+            <input type="radio" name="instagramCoverMode" value="thumbnail">
+            <span>Use this take’s thumbnail as the cover image.</span>
+          </label>
+          <label class="publish-option">
+            <input type="radio" name="instagramCoverMode" value="offset">
+            <span>Pick a frame offset in milliseconds.</span>
+          </label>
+          <input class="publish-input" id="instagramThumbOffsetInput" type="number" min="0" step="100" value="1500" placeholder="1500" disabled>
+        </div>
+      </div>
+
+      <div class="publish-disclosure" id="publishDisclosure">
+        StoryTeller keeps the selected take fixed for this publish action and will poll for status updates after you submit.
+      </div>
+
+      <p class="publish-feedback" id="publishModalFeedback"></p>
+
+      <button class="btn-cta publish-submit-btn" id="publishSubmitBtn" type="button">Publish</button>
+    </div>
+  </div>
+
+  <script>
+    const params = new URLSearchParams(window.location.search);
+    const storyId = params.get('storyId');
+    const SOCIAL_PLATFORMS = ['tiktok', 'instagram'];
+    const maxPollAttempts = 120;
+    const publishStorageKey = 'storytellerPublishJobs:' + (storyId || 'unknown');
+
+    let pollTimer = null;
+    let pollAttempts = 0;
+    let currentShareUrl = window.location.href;
+    let currentSelectedTakeId = null;
+    let currentSelectedTake = null;
+    let currentStoryData = null;
+    let shareHelpTimer = null;
+    let publishFeedbackTimer = null;
+    let socialAccountsRequestInFlight = null;
+    let socialUiState = {
+      isLoading: false,
+      actionPlatform: null,
+    };
+    let socialAccountsState = createDefaultSocialAccountsState();
+    let publishJobsByPlatform = {
+      tiktok: null,
+      instagram: null,
+    };
+    let retryingPublishJobId = null;
+    let publishModalState = {
+      open: false,
+      platform: null,
+      isSubmitting: false,
+      caption: '',
+      shareToFeed: true,
+      coverMode: 'default',
+      thumbOffsetMs: 1500,
+      feedbackMessage: '',
+      feedbackType: 'info',
+    };
+
+    const publishPollState = {
+      tiktok: { timer: null, inFlight: false },
+      instagram: { timer: null, inFlight: false },
+    };
+
+    function createDefaultSocialAccountsState() {
+      return {
+        accounts: [],
+        platforms: {
+          tiktok: { connected: false, account: null },
+          instagram: { connected: false, account: null },
+        },
+        platformConfigs: {
+          tiktok: { configured: null },
+          instagram: { configured: null },
+        },
+      };
+    }
+
+    function showView(name) {
+      ['loading', 'processing', 'result', 'error'].forEach((viewName) => {
+        const el = document.getElementById('view-' + viewName);
+        el.classList.toggle('active', viewName === name);
+      });
+    }
+
+    function showRecovery(message, href = '/story.html', linkText = 'Return home') {
+      document.getElementById('errorMessage').innerHTML =
+        message + ' <a href="' + href + '">' + linkText + '</a>';
+      showView('error');
+    }
+
+    function getAuthUser() {
+      return firebase.auth().currentUser;
+    }
+
+    async function getAuthToken() {
+      const user = getAuthUser();
+      if (!user) throw new Error('You must be signed in to continue.');
+      return user.getIdToken();
+    }
+
+    async function fetchJson(url, options = {}) {
+      const response = await fetch(url, options);
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        const error = new Error(payload.error || ('HTTP ' + response.status));
+        error.payload = payload;
+        error.status = response.status;
+        throw error;
+      }
+      return payload;
+    }
+
+    async function fetchStory() {
+      const token = await getAuthToken();
+      return fetchJson('/api/stories/' + encodeURIComponent(storyId), {
+        headers: { Authorization: 'Bearer ' + token },
+      });
+    }
+
+    function getVideoSignedUrl(data) {
+      return data.videoSignedUrl || data.finalVideoSignedUrl || data.video_signed_url || null;
+    }
+
+    function getRequestedTakeId() {
+      return new URLSearchParams(window.location.search).get('take');
+    }
+
+    function getStoryTakes(data) {
+      if (Array.isArray(data?.takes) && data.takes.length) return data.takes;
+
+      const legacyVideoSignedUrl = getVideoSignedUrl(data);
+      if (!legacyVideoSignedUrl) return [];
+
+      return [{
+        takeId: data.latestTakeId || data.finalReportId || 'legacy-story-take',
+        reportId: data.finalReportId || null,
+        responseDocId: data.responseDocId || null,
+        createdAt: data.createdAt || null,
+        videoSignedUrl: legacyVideoSignedUrl,
+        thumbnailSignedUrl: data.thumbnailSignedUrl || null,
+        audioSignedUrl: data.audioSignedUrl || null,
+        finalVideoGcs: data.finalVideoGcs || null,
+        thumbnailGcs: data.thumbnailGcs || null,
+        isLatest: true,
+      }];
+    }
+
+    function getLatestTake(data) {
+      const takes = getStoryTakes(data);
+      return takes.find((take) => take && take.isLatest) || takes[0] || null;
+    }
+
+    function getAvailableTakes(data) {
+      return getStoryTakes(data).filter((take) => take && take.videoSignedUrl);
+    }
+
+    function buildShareUrl(selectedTake, availableTakeCount) {
+      const url = new URL(window.location.href);
+      if (selectedTake?.reportId && availableTakeCount > 1) {
+        url.searchParams.set('take', selectedTake.reportId);
+      } else {
+        url.searchParams.delete('take');
+      }
+      return url;
+    }
+
+    function formatTakeLabel(index, total) {
+      return 'Take ' + String(total - index);
+    }
+
+    function selectTake(data) {
+      const takes = getAvailableTakes(data);
+      if (!takes.length) return null;
+
+      const requestedTakeId = currentSelectedTakeId || getRequestedTakeId();
+      if (requestedTakeId) {
+        const requested = takes.find((take) => (
+          take.takeId === requestedTakeId || take.reportId === requestedTakeId
+        ));
+        if (requested) return requested;
+      }
+
+      return takes.find((take) => take.isLatest) || takes[0];
+    }
+
+    function updateShareActions(selectedTake, availableTakeCount) {
+      const shareUrl = buildShareUrl(selectedTake, availableTakeCount);
+      currentShareUrl = shareUrl.toString();
+      currentSelectedTakeId = selectedTake?.reportId || selectedTake?.takeId || null;
+      currentSelectedTake = selectedTake || null;
+      history.replaceState({}, '', shareUrl.pathname + shareUrl.search);
+
+      const encodedUrl = encodeURIComponent(currentShareUrl);
+      const encodedText = encodeURIComponent('Watch my story on StoryTeller');
+
+      document.getElementById('twitterBtn').href =
+        'https://twitter.com/intent/tweet?text=' + encodedText + '&url=' + encodedUrl;
+      document.getElementById('facebookBtn').href =
+        'https://www.facebook.com/sharer/sharer.php?u=' + encodedUrl;
+      document.getElementById('whatsappBtn').href =
+        'https://wa.me/?text=' + encodeURIComponent(currentShareUrl);
+    }
+
+    function showShareHelp(message, isError = false) {
+      const shareHelp = document.getElementById('shareHelp');
+      shareHelp.textContent = message || '';
+      shareHelp.classList.toggle('error', Boolean(isError));
+      if (shareHelpTimer) clearTimeout(shareHelpTimer);
+      if (message) {
+        shareHelpTimer = setTimeout(() => {
+          shareHelp.textContent = '';
+          shareHelp.classList.remove('error');
+        }, 5000);
+      }
+    }
+
+    function setPublishFeedback(message, type = 'info') {
+      const feedbackEl = document.getElementById('publishFeedback');
+      feedbackEl.textContent = message || '';
+      feedbackEl.classList.remove('error', 'success');
+      if (type === 'error') feedbackEl.classList.add('error');
+      if (type === 'success') feedbackEl.classList.add('success');
+      if (publishFeedbackTimer) clearTimeout(publishFeedbackTimer);
+      if (message) {
+        publishFeedbackTimer = setTimeout(() => {
+          feedbackEl.textContent = '';
+          feedbackEl.classList.remove('error', 'success');
+        }, 6000);
+      }
+    }
+
+    function getPlatformLabel(platform) {
+      return platform === 'instagram' ? 'Instagram' : 'TikTok';
+    }
+
+    function getPlatformState(platform) {
+      return socialAccountsState.platforms?.[platform] || { connected: false, account: null };
+    }
+
+    function getPlatformConfig(platform) {
+      return socialAccountsState.platformConfigs?.[platform] || {
+        configured: null,
+      };
+    }
+
+    function getPlatformAccountLabel(account, platform) {
+      if (!account) return getPlatformLabel(platform);
+      if (account.username) return '@' + account.username;
+      if (account.displayName) return account.displayName;
+      return getPlatformLabel(platform) + ' account';
+    }
+
+    function formatConnectionStatus(status, connected) {
+      if (connected || status === 'active') return 'Connected';
+      if (status === 'reauth_required') return 'Reconnect needed';
+      if (status === 'revoked') return 'Access revoked';
+      if (status === 'disconnected') return 'Disconnected';
+      return 'Not connected';
+    }
+
+    function getTakeLabelById(takeId) {
+      const takes = getAvailableTakes(currentStoryData || {});
+      if (!takeId || !takes.length) return 'Selected take';
+      const index = takes.findIndex((take) => (
+        take.reportId === takeId || take.takeId === takeId || take.responseDocId === takeId
+      ));
+      if (index === -1) return 'Selected take';
+      return formatTakeLabel(index, takes.length);
+    }
+
+    function getSelectedTakeDescriptor(take) {
+      if (!take) return 'Selected take';
+      const label = getTakeLabelById(take.reportId || take.takeId);
+      return take.isLatest ? (label + ' • newest recording') : label;
+    }
+
+    function getPublishJobActivityAt(job) {
+      return job?.activityAt || job?.completedAt || job?.updatedAt || job?.startedAt || job?.createdAt || job?.queuedAt || null;
+    }
+
+    function comparePublishHistoryDesc(left, right) {
+      const leftTime = Date.parse(getPublishJobActivityAt(left) || 0) || 0;
+      const rightTime = Date.parse(getPublishJobActivityAt(right) || 0) || 0;
+      return rightTime - leftTime;
+    }
+
+    function getStoryPublishJobs() {
+      return Array.isArray(currentStoryData?.publishJobs) ? currentStoryData.publishJobs.slice() : [];
+    }
+
+    function getPublishHistoryForTake(take = currentSelectedTake) {
+      const takeKey = take?.reportId || take?.takeId || null;
+      if (!takeKey) return [];
+      return getStoryPublishJobs()
+        .filter((job) => job && (job.takeId === takeKey || job.takeReportId === takeKey || job.takeResponseDocId === takeKey))
+        .sort(comparePublishHistoryDesc);
+    }
+
+    function getLatestPublishJobForTakePlatform(platform, take = currentSelectedTake) {
+      return getPublishHistoryForTake(take).find((job) => job.platform === platform) || null;
+    }
+
+    function canDisplayRetryForJob(job) {
+      if (!job?.canRetry) return false;
+      const latestForPlatform = getLatestPublishJobForTakePlatform(job.platform);
+      return latestForPlatform?.publishJobId === job.publishJobId;
+    }
+
+    function upsertStoryPublishJob(job) {
+      if (!job) return null;
+
+      const nextJobs = getStoryPublishJobs();
+      const existingIndex = nextJobs.findIndex((entry) => entry.publishJobId === job.publishJobId);
+      if (existingIndex === -1) {
+        nextJobs.push(job);
+      } else {
+        nextJobs[existingIndex] = {
+          ...nextJobs[existingIndex],
+          ...job,
+        };
+      }
+
+      nextJobs.sort(comparePublishHistoryDesc);
+
+      if (currentStoryData) {
+        currentStoryData.publishJobs = nextJobs;
+        if (Array.isArray(currentStoryData.takes)) {
+          currentStoryData.takes = currentStoryData.takes.map((take) => {
+            const takeKey = take.reportId || take.takeId;
+            return {
+              ...take,
+              publishHistory: nextJobs.filter((entry) => entry.takeId === takeKey || entry.takeReportId === takeKey),
+            };
+          });
+        }
+      }
+
+      publishJobsByPlatform[job.platform] = job;
+      return job;
+    }
+
+    function formatPublishTimestamp(isoString) {
+      if (!isoString) return 'Just now';
+      const date = new Date(isoString);
+      if (Number.isNaN(date.getTime())) return 'Just now';
+      return date.toLocaleString('en-US', {
+        month: 'short',
+        day: 'numeric',
+        hour: 'numeric',
+        minute: '2-digit',
+      });
+    }
+
+    function getStoredPublishJobIds() {
+      try {
+        const parsed = JSON.parse(sessionStorage.getItem(publishStorageKey) || '{}');
+        return (parsed && typeof parsed === 'object') ? parsed : {};
+      } catch (_error) {
+        return {};
+      }
+    }
+
+    function rememberPublishJobId(platform, publishJobId) {
+      const stored = getStoredPublishJobIds();
+      stored[platform] = publishJobId;
+      sessionStorage.setItem(publishStorageKey, JSON.stringify(stored));
+    }
+
+    function clearStoredPublishJobId(platform) {
+      const stored = getStoredPublishJobIds();
+      delete stored[platform];
+      sessionStorage.setItem(publishStorageKey, JSON.stringify(stored));
+    }
+
+    function isFinalPublishStatus(status) {
+      return status === 'awaiting_user_action' || status === 'completed' || status === 'failed';
+    }
+
+    function getPublishJobPresentation(platform, job) {
+      if (!job) return null;
+      const message = job.lastError?.message || job.statusMessage || '';
+
+      if (job.status === 'queued') {
+        return { label: 'Queued', tone: 'pending', message: message || 'Queued for publishing.' };
+      }
+
+      if (job.status === 'processing') {
+        const uploadHint = /upload/i.test(message) || /UPLOAD/i.test(job.platformStatus || '');
+        return {
+          label: uploadHint ? 'Uploading' : 'Processing',
+          tone: 'processing',
+          message: message || 'Publishing is in progress.',
+        };
+      }
+
+      if (job.status === 'awaiting_user_action') {
+        return {
+          label: platform === 'tiktok' ? 'Ready in TikTok' : 'Ready',
+          tone: 'success',
+          message: message || 'Your publish is waiting for final action in the destination app.',
+        };
+      }
+
+      if (job.status === 'completed') {
+        return {
+          label: platform === 'instagram' ? 'Published' : 'Completed',
+          tone: 'success',
+          message: message || 'Your publish completed successfully.',
+        };
+      }
+
+      if (job.status === 'failed') {
+        return {
+          label: 'Failed',
+          tone: 'error',
+          message: message || 'Publishing failed.',
+        };
+      }
+
+      return {
+        label: 'Processing',
+        tone: 'processing',
+        message: message || 'Publishing is in progress.',
+      };
+    }
+
+    function stopPublishPolling(platform) {
+      const pollState = publishPollState[platform];
+      if (pollState?.timer) {
+        clearTimeout(pollState.timer);
+        pollState.timer = null;
+      }
+      if (pollState) {
+        pollState.inFlight = false;
+      }
+    }
+
+    function stopAllPublishPolling() {
+      SOCIAL_PLATFORMS.forEach(stopPublishPolling);
+    }
+
+    async function fetchPublishStatus(publishJobId) {
+      const token = await getAuthToken();
+      const payload = await fetchJson('/api/social/publishes/' + encodeURIComponent(publishJobId), {
+        headers: { Authorization: 'Bearer ' + token },
+      });
+      return payload.publishJob || null;
+    }
+
+    async function pollPublishJob(platform, publishJobId) {
+      const pollState = publishPollState[platform];
+      const activeJobId = publishJobId || publishJobsByPlatform[platform]?.publishJobId;
+      if (!pollState || !activeJobId || pollState.inFlight) return;
+
+      pollState.inFlight = true;
+
+      try {
+        const job = await fetchPublishStatus(activeJobId);
+        if (!job) {
+          clearStoredPublishJobId(platform);
+          publishJobsByPlatform[platform] = null;
+          renderPublishCards();
+          renderPublishHistory();
+          renderPublishModal();
+          return;
+        }
+
+        upsertStoryPublishJob(job);
+        rememberPublishJobId(platform, job.publishJobId);
+        renderPublishCards();
+        renderPublishHistory();
+        renderPublishModal();
+
+        if (isFinalPublishStatus(job.status)) {
+          stopPublishPolling(platform);
+          if (job.status === 'failed') {
+            setPublishFeedback(job.lastError?.message || job.statusMessage || (getPlatformLabel(platform) + ' publish failed.'), 'error');
+          } else if (job.status === 'awaiting_user_action') {
+            setPublishFeedback(job.statusMessage || 'Your TikTok draft is ready for review.', 'success');
+          } else {
+            setPublishFeedback(job.statusMessage || (getPlatformLabel(platform) + ' publish completed.'), 'success');
+          }
+          return;
+        }
+
+        pollState.timer = setTimeout(() => {
+          pollPublishJob(platform, activeJobId).catch((error) => {
+            console.error('[story-result] publish poll error:', error);
+          });
+        }, 4000);
+      } catch (error) {
+        console.error('[story-result] publish status error:', error);
+        renderPublishCards();
+        renderPublishHistory();
+        renderPublishModal();
+        pollState.timer = setTimeout(() => {
+          pollPublishJob(platform, activeJobId).catch((innerError) => {
+            console.error('[story-result] publish retry poll error:', innerError);
+          });
+        }, 6000);
+      } finally {
+        pollState.inFlight = false;
+      }
+    }
+
+    function beginPublishPolling(platform, publishJobId) {
+      stopPublishPolling(platform);
+      publishPollState[platform].timer = setTimeout(() => {
+        pollPublishJob(platform, publishJobId).catch((error) => {
+          console.error('[story-result] publish start poll error:', error);
+        });
+      }, 2500);
+    }
+
+    async function restorePublishJobsFromSession() {
+      const stored = getStoredPublishJobIds();
+      const jobs = [];
+
+      for (const platform of SOCIAL_PLATFORMS) {
+        const publishJobId = stored[platform];
+        if (!publishJobId) continue;
+        try {
+          const job = await fetchPublishStatus(publishJobId);
+          if (!job) {
+            clearStoredPublishJobId(platform);
+            continue;
+          }
+          upsertStoryPublishJob(job);
+          jobs.push(job);
+          if (!isFinalPublishStatus(job.status)) {
+            beginPublishPolling(platform, job.publishJobId);
+          }
+        } catch (error) {
+          console.error('[story-result] restore publish job error:', error);
+        }
+      }
+
+      renderPublishCards();
+      renderPublishHistory();
+      renderPublishModal();
+      return jobs;
+    }
+
+    async function loadSocialAccountsStatus(force = false) {
+      if (socialAccountsRequestInFlight && !force) {
+        return socialAccountsRequestInFlight;
+      }
+
+      socialUiState = { ...socialUiState, isLoading: true };
+      renderPublishCards();
+
+      socialAccountsRequestInFlight = (async () => {
+        const token = await getAuthToken();
+        const payload = await fetchJson('/api/social/accounts', {
+          headers: { Authorization: 'Bearer ' + token },
+        });
+
+        socialAccountsState = {
+          accounts: Array.isArray(payload.accounts) ? payload.accounts : [],
+          platforms: payload.platforms || createDefaultSocialAccountsState().platforms,
+          platformConfigs: payload.platformConfigs || createDefaultSocialAccountsState().platformConfigs,
+        };
+        renderPublishCards();
+        renderPublishModal();
+        return payload;
+      })();
+
+      try {
+        return await socialAccountsRequestInFlight;
+      } finally {
+        socialAccountsRequestInFlight = null;
+        socialUiState = { ...socialUiState, isLoading: false };
+        renderPublishCards();
+        renderPublishHistory();
+      }
+    }
+
+    function getPopupFeatures(width = 560, height = 720) {
+      const left = Math.max(0, Math.round((window.screen.width - width) / 2));
+      const top = Math.max(0, Math.round((window.screen.height - height) / 2));
+      return 'width=' + width + ',height=' + height + ',left=' + left + ',top=' + top + ',resizable=yes,scrollbars=yes';
+    }
+
+    function waitForSocialOAuthResult(platform, authWindow) {
+      return new Promise((resolve, reject) => {
+        let popupTimer = null;
+
+        function cleanup() {
+          window.removeEventListener('message', handleMessage);
+          if (popupTimer) clearInterval(popupTimer);
+        }
+
+        function handleMessage(event) {
+          if (event.origin !== window.location.origin) return;
+          if (!event.data || !String(event.data.type || '').startsWith('social-oauth-')) return;
+          if (event.data.platform !== platform) return;
+
+          cleanup();
+          if (authWindow && !authWindow.closed) authWindow.close();
+
+          if (event.data.type === 'social-oauth-success') {
+            resolve(event.data);
+          } else {
+            reject(new Error(event.data.error || ('Failed to connect ' + getPlatformLabel(platform))));
+          }
+        }
+
+        popupTimer = setInterval(() => {
+          if (authWindow && authWindow.closed) {
+            cleanup();
+            reject(new Error(getPlatformLabel(platform) + ' connection window was closed before it finished.'));
+          }
+        }, 400);
+
+        window.addEventListener('message', handleMessage);
+      });
+    }
+
+    async function startSocialConnect(platform, options = {}) {
+      const currentUser = getAuthUser();
+      if (!currentUser) {
+        showRecovery('You need to sign in to connect a social account.', '/story.html', 'Return home');
+        return;
+      }
+
+      const takeId = currentSelectedTake?.reportId || currentSelectedTake?.takeId || null;
+      socialUiState = { ...socialUiState, actionPlatform: platform };
+      renderPublishCards();
+      setPublishFeedback('Starting ' + getPlatformLabel(platform) + ' connection…');
+
+      try {
+        const token = await currentUser.getIdToken();
+        const payload = await fetchJson('/api/social/' + platform + '/connect/start', {
+          method: 'POST',
+          headers: {
+            Authorization: 'Bearer ' + token,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            storyId,
+            takeId,
+            redirectPath: window.location.pathname + window.location.search,
+          }),
+        });
+
+        const authWindow = window.open(
+          payload.authorizeUrl,
+          platform + 'Connect',
+          getPopupFeatures()
+        );
+
+        if (!authWindow) {
+          throw new Error('Popup blocked. Please allow popups and try again.');
+        }
+
+        const result = await waitForSocialOAuthResult(platform, authWindow);
+        await loadSocialAccountsStatus(true);
+        setPublishFeedback(getPlatformLabel(platform) + ' connected: ' + getPlatformAccountLabel(result.account, platform), 'success');
+
+        if (options.openDrawerOnSuccess && currentSelectedTake) {
+          openPublishDrawer(platform);
+        }
+      } catch (error) {
+        console.error('[story-result] social connect error:', error);
+        setPublishFeedback(error.message || ('Failed to connect ' + getPlatformLabel(platform)), 'error');
+      } finally {
+        socialUiState = { ...socialUiState, actionPlatform: null };
+        renderPublishCards();
+        renderPublishHistory();
+      }
+    }
+
+    function renderTakePicker(data, selectedTake) {
+      const takes = getAvailableTakes(data);
+      const takeSection = document.getElementById('takeSection');
+      const takeList = document.getElementById('takeList');
+      takeList.innerHTML = '';
+
+      if (takes.length < 2) {
+        takeSection.classList.remove('active');
+        return;
+      }
+
+      takes.forEach((take, index) => {
+        const btn = document.createElement('button');
+        btn.type = 'button';
+        btn.className = 'take-btn' + ((selectedTake?.reportId || selectedTake?.takeId) === (take.reportId || take.takeId) ? ' active' : '');
+        btn.innerHTML =
+          '<span class="take-btn-title">' + formatTakeLabel(index, takes.length) + '</span>' +
+          '<span class="take-btn-meta">' + (take.isLatest ? 'Newest recording' : 'Earlier recording') + '</span>';
+        btn.addEventListener('click', () => {
+          closePublishDrawer();
+          currentSelectedTakeId = take.reportId || take.takeId;
+          renderResult(data);
+        });
+        takeList.appendChild(btn);
+      });
+
+      takeSection.classList.add('active');
+    }
+
+    function renderPublishCards() {
+      SOCIAL_PLATFORMS.forEach((platform) => {
+        const platformState = getPlatformState(platform);
+        const account = platformState.account || null;
+        const button = document.getElementById(platform + 'PublishActionBtn');
+        const badge = document.getElementById(platform + 'PublishBadge');
+        const job = getLatestPublishJobForTakePlatform(platform);
+        const jobPresentation = getPublishJobPresentation(platform, job);
+        const isConnected = platformState.connected && account?.status === 'active';
+        const needsReconnect = account && (account.status === 'reauth_required' || account.status === 'revoked');
+        const takeReady = Boolean(currentSelectedTake?.videoSignedUrl && currentSelectedTake?.finalVideoGcs);
+        const publishBusy = Boolean(job && !isFinalPublishStatus(job.status));
+        const loadingAccounts = socialUiState.isLoading && !account && !socialAccountsState.accounts.length;
+
+        if (badge) {
+          badge.className = 'publish-badge';
+          if (jobPresentation) {
+            badge.textContent = jobPresentation.label;
+            badge.classList.add(jobPresentation.tone);
+          } else if (loadingAccounts) {
+            badge.textContent = 'Loading';
+            badge.classList.add('pending');
+          } else if (needsReconnect) {
+            badge.textContent = 'Reconnect needed';
+            badge.classList.add('warning');
+          } else if (isConnected) {
+            badge.textContent = 'Connected';
+            badge.classList.add('success');
+          } else {
+            badge.textContent = 'Not connected';
+            badge.classList.add('pending');
+          }
+        }
+
+        if (button) {
+          let buttonLabel = 'Connect';
+          let disabled = false;
+
+          if (socialUiState.actionPlatform === platform) {
+            buttonLabel = 'Connecting…';
+            disabled = true;
+          } else if (loadingAccounts) {
+            buttonLabel = 'Loading…';
+            disabled = true;
+          } else if (!account || account.status === 'disconnected') {
+            buttonLabel = 'Connect';
+          } else if (needsReconnect) {
+            buttonLabel = 'Reconnect';
+          } else if (publishBusy) {
+            buttonLabel = 'Publishing…';
+            disabled = true;
+          } else if (!takeReady) {
+            buttonLabel = 'Publish';
+            disabled = true;
+          } else {
+            buttonLabel = 'Publish';
+          }
+
+          button.textContent = buttonLabel;
+          button.disabled = disabled;
+          button.classList.toggle('secondary', buttonLabel === 'Reconnect' || buttonLabel === 'Connect');
+        }
+      });
+    }
+
+    function renderPublishHistory() {
+      const historyLabel = document.getElementById('publishHistoryLabel');
+      const historyList = document.getElementById('publishHistoryList');
+      const selectedTakeLabel = getSelectedTakeDescriptor(currentSelectedTake);
+      const publishHistory = getPublishHistoryForTake();
+
+      historyLabel.textContent = selectedTakeLabel ? ('Publish history for ' + selectedTakeLabel) : 'Publish history for this take';
+      historyList.innerHTML = '';
+
+      if (!publishHistory.length) {
+        const emptyState = document.createElement('div');
+        emptyState.className = 'publish-history-empty';
+        emptyState.textContent = 'This take has not been published yet. Use the cards above to publish it or connect an account first.';
+        historyList.appendChild(emptyState);
+        return;
+      }
+
+      publishHistory.forEach((job) => {
+        const presentation = getPublishJobPresentation(job.platform, job);
+        const item = document.createElement('article');
+        item.className = 'publish-history-item';
+
+        const reasonHtml = job.failureReason
+          ? '<p class="publish-history-reason">' + job.failureReason + '</p>'
+          : '';
+
+        item.innerHTML = `
+          <div class="publish-history-row">
+            <div>
+              <p class="publish-history-platform">${getPlatformLabel(job.platform)}</p>
+              <p class="publish-history-meta">${formatPublishTimestamp(getPublishJobActivityAt(job))}</p>
+            </div>
+            <span class="publish-badge ${presentation?.tone || ''}">${presentation?.label || 'Processing'}</span>
+          </div>
+          <p class="publish-history-meta">${job.statusMessage || presentation?.message || 'Publish status available.'}</p>
+          ${reasonHtml}
+        `;
+
+        if (canDisplayRetryForJob(job)) {
+          const actions = document.createElement('div');
+          actions.className = 'publish-history-actions';
+          const retryButton = document.createElement('button');
+          retryButton.type = 'button';
+          retryButton.className = 'publish-history-retry';
+          retryButton.textContent = retryingPublishJobId === job.publishJobId ? 'Retrying…' : 'Retry';
+          retryButton.disabled = retryingPublishJobId === job.publishJobId;
+          retryButton.addEventListener('click', () => {
+            retryPublishJob(job.publishJobId).catch((error) => {
+              console.error('[story-result] retry publish handler error:', error);
+            });
+          });
+          actions.appendChild(retryButton);
+          item.appendChild(actions);
+        }
+
+        historyList.appendChild(item);
+      });
+    }
+
+    function syncPublishModalInputs() {
+      const captionInput = document.getElementById('publishCaptionInput');
+      const shareToFeedInput = document.getElementById('instagramShareToFeedInput');
+      const thumbOffsetInput = document.getElementById('instagramThumbOffsetInput');
+      const captionCount = document.getElementById('publishCaptionCount');
+      const coverModeInputs = document.querySelectorAll('input[name="instagramCoverMode"]');
+
+      captionInput.value = publishModalState.caption || '';
+      shareToFeedInput.checked = Boolean(publishModalState.shareToFeed);
+      thumbOffsetInput.value = String(publishModalState.thumbOffsetMs ?? 1500);
+      thumbOffsetInput.disabled = publishModalState.coverMode !== 'offset';
+      captionCount.textContent = String((publishModalState.caption || '').length) + ' / 2200';
+
+      coverModeInputs.forEach((input) => {
+        input.checked = input.value === publishModalState.coverMode;
+      });
+    }
+
+    function renderPublishModal() {
+      const overlay = document.getElementById('publishOverlay');
+      const platform = publishModalState.platform;
+
+      if (!publishModalState.open || !platform || !currentSelectedTake) {
+        overlay.classList.add('hidden');
+        return;
+      }
+
+      const label = getPlatformLabel(platform);
+      const account = getPlatformState(platform).account || null;
+      const job = getLatestPublishJobForTakePlatform(platform);
+      const jobPresentation = getPublishJobPresentation(platform, job);
+      const submitBtn = document.getElementById('publishSubmitBtn');
+      const captionHint = document.getElementById('publishCaptionHint');
+      const previewVideo = document.getElementById('publishPreviewVideo');
+      const statusPanel = document.getElementById('publishStatusPanel');
+      const statusBadge = document.getElementById('publishStatusBadge');
+      const statusText = document.getElementById('publishStatusText');
+      const instagramOptionsGroup = document.getElementById('instagramOptionsGroup');
+      const thumbnailOption = document.getElementById('instagramThumbnailCoverOption');
+      const modalFeedback = document.getElementById('publishModalFeedback');
+      const publishBusy = Boolean(job && !isFinalPublishStatus(job.status));
+
+      overlay.classList.remove('hidden');
+      document.getElementById('publishModalKicker').textContent = label;
+      document.getElementById('publishModalTitle').textContent =
+        platform === 'instagram' ? 'Publish this Reel' : 'Send this draft';
+      document.getElementById('publishPreviewTitle').textContent = getSelectedTakeDescriptor(currentSelectedTake);
+      document.getElementById('publishPreviewMeta').textContent =
+        'Publishing uses the currently selected take as an immutable source.';
+
+      if (currentSelectedTake.videoSignedUrl && previewVideo.src !== currentSelectedTake.videoSignedUrl) {
+        previewVideo.src = currentSelectedTake.videoSignedUrl;
+        previewVideo.load();
+      }
+      previewVideo.play().catch(() => {});
+
+      captionHint.textContent = platform === 'instagram'
+        ? 'For Instagram, this caption is submitted with the Reel.'
+        : 'For TikTok drafts, this caption is saved with the publish job for reference. You will still edit the final draft inside TikTok.';
+
+      document.getElementById('publishDisclosure').textContent = platform === 'instagram'
+        ? 'StoryTeller will submit this take as an Instagram Reel and continue polling Meta until the publish completes or fails.'
+        : 'StoryTeller will upload this take as a TikTok draft and continue polling until TikTok reports the draft is ready.';
+
+      instagramOptionsGroup.classList.toggle('hidden', platform !== 'instagram');
+      thumbnailOption.classList.toggle('hidden', !currentSelectedTake.thumbnailSignedUrl);
+      if (!currentSelectedTake.thumbnailSignedUrl && publishModalState.coverMode === 'thumbnail') {
+        publishModalState.coverMode = 'default';
+      }
+
+      modalFeedback.textContent = '';
+      modalFeedback.classList.remove('error', 'success');
+      if (publishModalState.feedbackMessage) {
+        modalFeedback.textContent = publishModalState.feedbackMessage;
+        if (publishModalState.feedbackType === 'error') modalFeedback.classList.add('error');
+        if (publishModalState.feedbackType === 'success') modalFeedback.classList.add('success');
+      }
+
+      if (jobPresentation) {
+        statusPanel.classList.remove('hidden');
+        statusBadge.className = 'publish-badge ' + jobPresentation.tone;
+        statusBadge.textContent = jobPresentation.label;
+        statusText.textContent = jobPresentation.message;
+      } else if (publishBusy && job) {
+        statusPanel.classList.remove('hidden');
+        statusBadge.className = 'publish-badge processing';
+        statusBadge.textContent = 'Processing';
+        statusText.textContent = job.statusMessage || 'Publishing is in progress.';
+      } else {
+        statusPanel.classList.add('hidden');
+        statusBadge.className = 'publish-badge';
+        statusBadge.textContent = '';
+        statusText.textContent = '';
+      }
+
+      syncPublishModalInputs();
+
+      const accountReady = account && account.status === 'active';
+      if (!accountReady) {
+        submitBtn.textContent = 'Connect ' + label;
+        submitBtn.disabled = false;
+      } else if (publishModalState.isSubmitting || publishBusy) {
+        submitBtn.textContent = 'Publishing…';
+        submitBtn.disabled = true;
+      } else {
+        submitBtn.textContent = platform === 'instagram' ? 'Publish Reel' : 'Send Draft to TikTok';
+        submitBtn.disabled = false;
+      }
+    }
+
+    function openPublishDrawer(platform) {
+      if (!currentSelectedTake?.videoSignedUrl) {
+        setPublishFeedback('This take is still processing. Publish will unlock once the video is ready.', 'error');
+        return;
+      }
+
+      publishModalState = {
+        ...publishModalState,
+        open: true,
+        platform,
+        isSubmitting: false,
+        caption: '',
+        shareToFeed: true,
+        coverMode: currentSelectedTake.thumbnailSignedUrl ? 'thumbnail' : 'default',
+        thumbOffsetMs: 1500,
+        feedbackMessage: '',
+        feedbackType: 'info',
+      };
+      renderPublishModal();
+      document.getElementById('publishCaptionInput').focus();
+    }
+
+    function closePublishDrawer() {
+      publishModalState = {
+        ...publishModalState,
+        open: false,
+        platform: null,
+        isSubmitting: false,
+      };
+      renderPublishModal();
+    }
+
+    function getPlatformOptionsFromModal(platform) {
+      if (platform !== 'instagram') return {};
+
+      const options = {
+        shareToFeed: Boolean(publishModalState.shareToFeed),
+      };
+
+      if (publishModalState.coverMode === 'thumbnail' && currentSelectedTake?.thumbnailSignedUrl) {
+        options.useTakeThumbnailAsCover = true;
+      } else if (publishModalState.coverMode === 'offset') {
+        options.thumbOffsetMs = Math.max(0, Math.trunc(Number(publishModalState.thumbOffsetMs) || 0));
+      }
+
+      return options;
+    }
+
+    async function retryPublishJob(publishJobId) {
+      if (!publishJobId || retryingPublishJobId) return;
+
+      retryingPublishJobId = publishJobId;
+      renderPublishHistory();
+
+      try {
+        const token = await getAuthToken();
+        const payload = await fetchJson('/api/social/publishes/' + encodeURIComponent(publishJobId) + '/retry', {
+          method: 'POST',
+          headers: {
+            Authorization: 'Bearer ' + token,
+          },
+        });
+
+        const publishJob = payload.publishJob || null;
+        if (!publishJob?.publishJobId) {
+          throw new Error('The retry was accepted, but no publish job was returned.');
+        }
+
+        upsertStoryPublishJob(publishJob);
+        rememberPublishJobId(publishJob.platform, publishJob.publishJobId);
+        beginPublishPolling(publishJob.platform, publishJob.publishJobId);
+        openPublishDrawer(publishJob.platform);
+        setPublishFeedback(getPlatformLabel(publishJob.platform) + ' retry queued for ' + getSelectedTakeDescriptor(currentSelectedTake) + '.', 'success');
+      } catch (error) {
+        const existingPublishJob = error.payload?.publishJob || null;
+        if (existingPublishJob?.publishJobId) {
+          upsertStoryPublishJob(existingPublishJob);
+          rememberPublishJobId(existingPublishJob.platform, existingPublishJob.publishJobId);
+          if (!isFinalPublishStatus(existingPublishJob.status)) {
+            beginPublishPolling(existingPublishJob.platform, existingPublishJob.publishJobId);
+          }
+        }
+        setPublishFeedback(error.message || 'Failed to retry this publish job.', 'error');
+      } finally {
+        retryingPublishJobId = null;
+        renderPublishCards();
+        renderPublishHistory();
+        renderPublishModal();
+      }
+    }
+
+    async function submitPublishFromModal() {
+      const platform = publishModalState.platform;
+      if (!platform || !currentSelectedTake || publishModalState.isSubmitting) return;
+
+      const platformState = getPlatformState(platform);
+      const account = platformState.account || null;
+      const label = getPlatformLabel(platform);
+
+      if (!account || account.status === 'disconnected') {
+        await startSocialConnect(platform, { openDrawerOnSuccess: true });
+        return;
+      }
+
+      if (account.status !== 'active') {
+        await startSocialConnect(platform, { openDrawerOnSuccess: true });
+        return;
+      }
+
+      publishModalState = {
+        ...publishModalState,
+        isSubmitting: true,
+        feedbackMessage: '',
+        feedbackType: 'info',
+      };
+      renderPublishModal();
+
+      try {
+        const token = await getAuthToken();
+        const takeId = currentSelectedTake.reportId || currentSelectedTake.takeId;
+        const payload = await fetchJson(
+          '/api/stories/' + encodeURIComponent(storyId) +
+          '/takes/' + encodeURIComponent(takeId) +
+          '/publish/' + encodeURIComponent(platform),
+          {
+            method: 'POST',
+            headers: {
+              Authorization: 'Bearer ' + token,
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+              socialAccountId: account.socialAccountId,
+              caption: publishModalState.caption,
+              platformOptions: getPlatformOptionsFromModal(platform),
+            }),
+          }
+        );
+
+        const publishJob = payload.publishJob || null;
+        if (!publishJob?.publishJobId) {
+          throw new Error('The publish job was created, but no job ID was returned.');
+        }
+
+        upsertStoryPublishJob(publishJob);
+        rememberPublishJobId(platform, publishJob.publishJobId);
+        beginPublishPolling(platform, publishJob.publishJobId);
+        publishModalState = {
+          ...publishModalState,
+          feedbackMessage: '',
+          feedbackType: 'info',
+        };
+        setPublishFeedback(label + ' publish queued for ' + getSelectedTakeDescriptor(currentSelectedTake) + '.', 'success');
+      } catch (error) {
+        console.error('[story-result] submit publish error:', error);
+        publishModalState = {
+          ...publishModalState,
+          feedbackMessage: error.message || ('Failed to publish to ' + label + '.'),
+          feedbackType: 'error',
+        };
+        setPublishFeedback(error.message || ('Failed to publish to ' + label + '.'), 'error');
+      } finally {
+        publishModalState = { ...publishModalState, isSubmitting: false };
+        renderPublishCards();
+        renderPublishHistory();
+        renderPublishModal();
+      }
+    }
+
+    function renderResult(data) {
+      currentStoryData = data;
+      currentStoryData.publishJobs = Array.isArray(data.publishJobs) ? data.publishJobs.slice() : [];
+      Object.values(publishJobsByPlatform).filter(Boolean).forEach((job) => {
+        upsertStoryPublishJob(job);
+      });
+
+      const selectedTake = selectTake(data);
+      const availableTakes = getAvailableTakes(data);
+      const videoSignedUrl = selectedTake?.videoSignedUrl || getVideoSignedUrl(data);
+      const video = document.getElementById('storyVideo');
+      if (videoSignedUrl && video.src !== videoSignedUrl) {
+        video.src = videoSignedUrl;
+        video.load();
+      }
+
+      renderTakePicker(data, selectedTake);
+
+      const promptEl = document.getElementById('promptText');
+      promptEl.textContent = data.promptText ? '“' + data.promptText + '”' : '';
+
+      const publishLabel = document.getElementById('publishLabel');
+      const shareLabel = document.getElementById('shareLabel');
+      publishLabel.textContent = availableTakes.length > 1 ? 'Publish this take' : 'Publish your story';
+      shareLabel.textContent = availableTakes.length > 1 ? 'Manual share this take' : 'Manual share your story';
+
+      const dlBtn = document.getElementById('downloadBtn');
+      if (videoSignedUrl) {
+        dlBtn.href = videoSignedUrl;
+        dlBtn.style.display = '';
+      } else {
+        dlBtn.style.display = 'none';
+      }
+
+      updateShareActions(selectedTake, availableTakes.length);
+      renderPublishCards();
+      renderPublishHistory();
+      renderPublishModal();
+
+      const retakeSection = document.getElementById('retakeSection');
+      if (localStorage.getItem('retake_result_used_' + storyId)) {
+        retakeSection.style.display = 'none';
+      }
+
+      showView('result');
+    }
+
+    function shouldTreatAsPermanentFailure(data) {
+      return Boolean(data.mediaProcessingError || data.mediaProcessingFailedAt);
+    }
+
+    function updateProcessingCopy(data) {
+      const messageEl = document.getElementById('processingMessage');
+      const latestTake = getLatestTake(data);
+      const availableTakes = getAvailableTakes(data);
+      if (latestTake && !latestTake.videoSignedUrl && availableTakes.length > 0) {
+        messageEl.textContent = 'Your new take is saved. We’re finishing the video now, and both takes will appear here once it’s ready.';
+      } else if (data.status === 'final_recorded') {
+        messageEl.textContent = 'Your recording is saved. We’re finishing the video now.';
+      } else {
+        messageEl.textContent = 'We’re finishing your final telling now. This usually takes less than a minute.';
+      }
+    }
+
+    async function checkStoryState(data) {
+      if (shouldTreatAsPermanentFailure(data)) {
+        showRecovery(
+          'Your final telling did not finish processing.',
+          '/story-final.html?storyId=' + encodeURIComponent(storyId),
+          'Record again'
+        );
+        return true;
+      }
+
+      const latestTake = getLatestTake(data);
+      if (latestTake?.videoSignedUrl) {
+        if (pollTimer) clearInterval(pollTimer);
+        renderResult(data);
+        return true;
+      }
+
+      if (!latestTake) {
+        const videoSignedUrl = getVideoSignedUrl(data);
+        if (videoSignedUrl) {
+          if (pollTimer) clearInterval(pollTimer);
+          renderResult(data);
+          return true;
+        }
+      }
+
+      return false;
+    }
+
+    async function loadAndPoll() {
+      if (!storyId) {
+        showRecovery('Missing story ID.', '/story.html', 'Return home');
+        return;
+      }
+
+      showView('loading');
+      loadSocialAccountsStatus(true).catch((error) => {
+        console.error('[story-result] social accounts load error:', error);
+        setPublishFeedback(error.message || 'Unable to load connected accounts right now.', 'error');
+      });
+
+      try {
+        const data = await fetchStory();
+        await restorePublishJobsFromSession();
+        if (await checkStoryState(data)) return;
+
+        updateProcessingCopy(data);
+        showView('processing');
+
+        pollAttempts = 0;
+        pollTimer = setInterval(async () => {
+          pollAttempts++;
+          if (pollAttempts > maxPollAttempts) {
+            clearInterval(pollTimer);
+            showRecovery(
+              'This story took too long to finish processing.',
+              '/story-final.html?storyId=' + encodeURIComponent(storyId),
+              'Record again'
+            );
+            return;
+          }
+
+          try {
+            const fresh = await fetchStory();
+            if (await checkStoryState(fresh)) return;
+            updateProcessingCopy(fresh);
+          } catch (error) {
+            console.error('[story-result] polling error:', error);
+          }
+        }, 5000);
+      } catch (error) {
+        console.error('[story-result] load error:', error);
+        showRecovery(
+          'We couldn\'t load your story.',
+          '/story-final.html?storyId=' + encodeURIComponent(storyId),
+          'Record again'
+        );
+      }
+    }
+
+    document.getElementById('copyBtn').addEventListener('click', () => {
+      navigator.clipboard.writeText(currentShareUrl).then(() => {
+        const toast = document.getElementById('copyToast');
+        toast.classList.add('show');
+        showShareHelp('Story link copied.');
+        setTimeout(() => toast.classList.remove('show'), 2000);
+      }).catch(() => {
+        showShareHelp('Unable to copy the story link.', true);
+      });
+    });
+
+    document.getElementById('tiktokPublishActionBtn').addEventListener('click', async () => {
+      const platformState = getPlatformState('tiktok');
+      const account = platformState.account || null;
+      if (!account || account.status === 'disconnected' || account.status === 'reauth_required' || account.status === 'revoked') {
+        await startSocialConnect('tiktok', { openDrawerOnSuccess: true });
+        return;
+      }
+      openPublishDrawer('tiktok');
+    });
+
+    document.getElementById('instagramPublishActionBtn').addEventListener('click', async () => {
+      const platformState = getPlatformState('instagram');
+      const account = platformState.account || null;
+      if (!account || account.status === 'disconnected' || account.status === 'reauth_required' || account.status === 'revoked') {
+        await startSocialConnect('instagram', { openDrawerOnSuccess: true });
+        return;
+      }
+      openPublishDrawer('instagram');
+    });
+
+    document.getElementById('publishCloseBtn').addEventListener('click', closePublishDrawer);
+    document.getElementById('publishOverlay').addEventListener('click', (event) => {
+      if (event.target.id === 'publishOverlay') {
+        closePublishDrawer();
+      }
+    });
+
+    document.getElementById('publishCaptionInput').addEventListener('input', (event) => {
+      publishModalState = { ...publishModalState, caption: event.target.value };
+      syncPublishModalInputs();
+    });
+
+    document.getElementById('instagramShareToFeedInput').addEventListener('change', (event) => {
+      publishModalState = { ...publishModalState, shareToFeed: event.target.checked };
+      renderPublishModal();
+    });
+
+    document.querySelectorAll('input[name="instagramCoverMode"]').forEach((input) => {
+      input.addEventListener('change', (event) => {
+        publishModalState = { ...publishModalState, coverMode: event.target.value };
+        renderPublishModal();
+      });
+    });
+
+    document.getElementById('instagramThumbOffsetInput').addEventListener('input', (event) => {
+      publishModalState = {
+        ...publishModalState,
+        thumbOffsetMs: Math.max(0, Math.trunc(Number(event.target.value) || 0)),
+      };
+      syncPublishModalInputs();
+    });
+
+    document.getElementById('publishSubmitBtn').addEventListener('click', () => {
+      submitPublishFromModal().catch((error) => {
+        console.error('[story-result] publish submit handler error:', error);
+      });
+    });
+
+    document.getElementById('retakeBtn').addEventListener('click', () => {
+      localStorage.setItem('retake_result_used_' + storyId, '1');
+      document.getElementById('retakeOverlay').classList.remove('hidden');
+    });
+
+    document.getElementById('retakeConfirmBtn').addEventListener('click', (event) => {
+      event.preventDefault();
+      window.location.href = '/story-final.html?storyId=' + encodeURIComponent(storyId);
+    });
+
+    document.getElementById('retakeCancelBtn').addEventListener('click', () => {
+      document.getElementById('retakeOverlay').classList.add('hidden');
+      document.getElementById('retakeSection').style.display = 'none';
+    });
+
+    document.getElementById('signOutBtn').addEventListener('click', () => {
+      if (pollTimer) clearInterval(pollTimer);
+      stopAllPublishPolling();
+      firebase.auth().signOut().then(() => {
+        window.location.href = '/story.html';
+      });
+    });
+
+    window.addEventListener('beforeunload', () => {
+      if (pollTimer) clearInterval(pollTimer);
+      stopAllPublishPolling();
+    });
+
+    firebase.auth().onAuthStateChanged((user) => {
+      if (!user) {
+        window.location.href = '/story.html';
+        return;
+      }
+      loadAndPoll();
+    });
+  </script>
+
+</body>
+</html>

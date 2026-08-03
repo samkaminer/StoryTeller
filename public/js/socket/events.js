@@ -428,6 +428,13 @@ function setupSessionEvents(socket) {
 // Interview flow events
 function setupInterviewEvents(socket) {
     socket.on('redirectToReport', (data) => {
+        // Story mode: navigate directly to the story review page
+        if (data && data.storyMode && data.redirectUrl) {
+            console.log('[redirectToReport] Story mode complete, navigating to:', data.redirectUrl);
+            window.location.href = data.redirectUrl;
+            return;
+        }
+
         console.log('[redirectToReport] Report generation complete - no redirect, email will be sent');
         console.log('[redirectToReport] Current state:', {
             inProgress: state.interview.inProgress,

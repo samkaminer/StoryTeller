@@ -1734,6 +1734,29 @@ window.checkFormCompletion = checkFormCompletion;
 window.updateUploaderVisibility = updateUploaderVisibility;
 window.handleCreateAudioSummary = handleCreateAudioSummary;
 
+// Story-mode exit: ends interview immediately, bypassing the minimum-time gate
+window.storyEndInterview = function () {
+    const wasRecording = state.recording.isRecording;
+    // Stop active recording first so the last answer is submitted
+    if (wasRecording && elements.recordBtn && !elements.recordBtn.disabled) {
+        elements.recordBtn.click();
+    }
+    const doEnd = function () {
+        if (state.socket && state.socket.instance) {
+            state.socket.instance.emit('endStory');
+        }
+        if (elements.recordBtn) elements.recordBtn.disabled = true;
+        const genBtn = document.getElementById('generateReportBtn');
+        if (genBtn) { genBtn.disabled = true; genBtn.classList.remove('hidden'); }
+    };
+    // Give the recording 600 ms to finish submitting before signalling end
+    if (wasRecording) {
+        setTimeout(doEnd, 600);
+    } else {
+        doEnd();
+    }
+};
+
 // Set up page unload handler
 window.addEventListener('beforeunload', cleanup);
 

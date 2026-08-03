@@ -28,9 +28,18 @@ export async function setupVideoStream() {
         
         console.log('Device detection:', { isMobile, isIOS, userAgent: navigator.userAgent });
         
-        // Use different constraints for mobile vs desktop
+        // Story mode requests portrait 9:16 constraints natively.
+        // Desktop webcams that can't deliver portrait will be center-cropped server-side (M5).
+        const isStoryMode = document.documentElement.classList.contains('story-mode');
+
         const constraints = {
-            video: isMobile ? {
+            video: isStoryMode ? {
+                width: { ideal: 1080, min: 480 },
+                height: { ideal: 1920, min: 720 },
+                frameRate: { ideal: 30, min: 15 },
+                facingMode: 'user',
+                aspectRatio: { ideal: 9 / 16 }
+            } : isMobile ? {
                 width: { ideal: 1280, min: 480 },
                 height: { ideal: 720, min: 360 },
                 frameRate: { ideal: 30, min: 15 },

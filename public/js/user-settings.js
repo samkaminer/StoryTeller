@@ -1,6 +1,40 @@
 // User Settings Module
 // Handles user profile and settings management
 
+const SUPPORTED_SOCIAL_PLATFORMS = ['tiktok', 'instagram'];
+let socialAccountsRequestInFlight = null;
+let socialAccountUiState = {
+    isLoading: false,
+    actionPlatform: null,
+    disconnectingPlatform: null
+};
+
+function createDefaultSocialPlatforms() {
+    return {
+        tiktok: { connected: false, account: null },
+        instagram: { connected: false, account: null }
+    };
+}
+
+function createDefaultSocialPlatformConfigs() {
+    return {
+        tiktok: { configured: null },
+        instagram: { configured: null }
+    };
+}
+
+function createDefaultSocialAccountsState() {
+    return {
+        socialAccounts: [],
+        socialPlatforms: createDefaultSocialPlatforms(),
+        socialPlatformConfigs: createDefaultSocialPlatformConfigs()
+    };
+}
+
+function getSocialPlatformConfig(platform) {
+    return appState.userProfile.socialPlatformConfigs?.[platform] || createDefaultSocialPlatformConfigs()[platform];
+}
+
 // Apply user settings panel state from appState
 function applyUserSettingsPanelState() {
     const panel = document.getElementById('userSettingsPanel'); 
@@ -38,6 +72,21 @@ function applyUserSettingsPanelState() {
         
         // Update Gmail connection status
         updateGmailConnectionStatus();
+        socialAccountUiState = { ...socialAccountUiState, isLoading: true };
+        updateSocialConnectionStatus();
+        setSocialAccountsFeedback('Loading connected accounts…');
+        loadSocialAccountsStatus()
+            .then(() => {
+                setSocialAccountsFeedback('');
+            })
+            .catch((error) => {
+                console.error('Error loading connected accounts:', error);
+                setSocialAccountsFeedback(error.message || 'Failed to load connected accounts', 'error');
+            })
+            .finally(() => {
+                socialAccountUiState = { ...socialAccountUiState, isLoading: false };
+                updateSocialConnectionStatus();
+            });
 
         panel.style.display = 'flex';
         overlay.style.opacity = '1';
@@ -60,7 +109,13 @@ function applyUserSettingsPanelState() {
 async function loadUserProfile() {
     const currentUser = auth.currentUser;
     if (!currentUser) {
-        appState.setUserProfile({ displayName: '', organization: '' });
+        appState.setUserProfile({
+            displayName: '',
+            organization: '',
+            gmailConnected: false,
+            gmailEmail: null,
+            ...createDefaultSocialAccountsState()
+        });
         return;
     }
 
@@ -76,7 +131,8 @@ async function loadUserProfile() {
                 torusConfig: userData.torusConfig || null,
                 torusConfigs: userData.torusConfigs || [],
                 gmailConnected: userData.gmailConnected || false,
-                gmailEmail: userData.gmailEmail || null
+                gmailEmail: userData.gmailEmail || null,
+                ...createDefaultSocialAccountsState()
             });
         } else {
             // Document doesn't exist, create it
@@ -100,7 +156,8 @@ async function loadUserProfile() {
                 torusConfig: null,
                 torusConfigs: [],
                 gmailConnected: false,
-                gmailEmail: null
+                gmailEmail: null,
+                ...createDefaultSocialAccountsState()
             });
             console.log('User profile document created in Firestore for UID:', currentUser.uid, 'Provider:', initialProfile.providerId);
             
@@ -117,8 +174,17 @@ async function loadUserProfile() {
             displayName: fallbackDisplayName,
             organization: '',
             torusConfig: null,
-            torusConfigs: []
+            torusConfigs: [],
+            gmailConnected: false,
+            gmailEmail: null,
+            ...createDefaultSocialAccountsState()
         });
+    }
+
+    try {
+        await loadSocialAccountsStatus();
+    } catch (socialError) {
+        console.warn('Unable to preload social account status:', socialError.message);
     }
     
     // Update UI if settings panel is open
@@ -283,6 +349,332 @@ function updateGmailConnectionStatus() {
     }
 }
 
+function getSocialPlatformState(platform) {
+    return appState.userProfile.socialPlatforms?.[platform] || { connected: false, account: null };
+}
+
+function getSocialFeedbackElement() {
+    return document.getElementById('socialAccountsFeedback');
+}
+
+function setSocialAccountsFeedback(message, type = 'info') {
+    const feedbackEl = getSocialFeedbackElement();
+    if (!feedbackEl) return;
+
+    if (!message) {
+        feedbackEl.textContent = '';
+        feedbackEl.classList.add('hidden');
+        feedbackEl.classList.remove('bg-red-900', 'bg-opacity-20', 'border', 'border-red-600', 'text-red-300');
+        feedbackEl.classList.remove('bg-green-900', 'bg-opacity-20', 'border-green-600', 'text-green-300');
+        feedbackEl.classList.remove('bg-blue-900', 'border-blue-600', 'text-blue-200');
+        return;
+    }
+
+    feedbackEl.textContent = message;
+    feedbackEl.classList.remove('hidden');
+    feedbackEl.classList.remove('bg-red-900', 'bg-opacity-20', 'border', 'border-red-600', 'text-red-300');
+    feedbackEl.classList.remove('bg-green-900', 'border-green-600', 'text-green-300');
+    feedbackEl.classList.remove('bg-blue-900', 'border-blue-600', 'text-blue-200');
+    feedbackEl.classList.add('border');
+
+    if (type === 'error') {
+        feedbackEl.classList.add('bg-red-900', 'bg-opacity-20', 'border-red-600', 'text-red-300');
+    } else if (type === 'success') {
+        feedbackEl.classList.add('bg-green-900', 'bg-opacity-20', 'border-green-600', 'text-green-300');
+    } else {
+        feedbackEl.classList.add('bg-blue-900', 'bg-opacity-20', 'border-blue-600', 'text-blue-200');
+    }
+}
+
+function getSocialPlatformLabel(platform) {
+    return platform === 'instagram' ? 'Instagram' : 'TikTok';
+}
+
+function updateSocialRefreshButton() {
+    const refreshBtn = document.getElementById('refreshSocialAccountsBtn');
+    if (!refreshBtn) return;
+
+    const isBusy = socialAccountUiState.isLoading || Boolean(socialAccountUiState.actionPlatform) || Boolean(socialAccountUiState.disconnectingPlatform);
+    refreshBtn.textContent = socialAccountUiState.isLoading ? 'Refreshing…' : 'Refresh';
+    refreshBtn.disabled = isBusy;
+    refreshBtn.classList.toggle('opacity-60', isBusy);
+    refreshBtn.classList.toggle('cursor-not-allowed', isBusy);
+}
+
+function formatSocialStatus(status, connected) {
+    if (connected || status === 'active') return 'Connected';
+    if (status === 'reauth_required') return 'Reconnect needed';
+    if (status === 'disconnected') return 'Disconnected';
+    if (status === 'revoked') return 'Access revoked';
+    return 'Not connected';
+}
+
+function updateSocialPlatformCard(platform) {
+    const platformState = getSocialPlatformState(platform);
+    const account = platformState.account || null;
+    const label = getSocialPlatformLabel(platform);
+    const status = account?.status || (platformState.connected ? 'active' : null);
+    const isBusy = socialAccountUiState.isLoading || socialAccountUiState.actionPlatform === platform || socialAccountUiState.disconnectingPlatform === platform;
+    const canDisconnect = Boolean(account?.socialAccountId) && status !== 'disconnected';
+    const shouldShowReconnect = Boolean(account?.socialAccountId);
+    const isConnected = platformState.connected && status === 'active';
+
+    const statusBadge = document.getElementById(`${platform}StatusBadge`);
+    const summaryEl = document.getElementById(`${platform}AccountSummary`);
+    const metaEl = document.getElementById(`${platform}AccountMeta`);
+    const connectBtn = document.getElementById(`connect${platform === 'instagram' ? 'Instagram' : 'Tiktok'}Btn`);
+    const reconnectBtn = document.getElementById(`reconnect${platform === 'instagram' ? 'Instagram' : 'Tiktok'}Btn`);
+    const disconnectBtn = document.getElementById(`disconnect${platform === 'instagram' ? 'Instagram' : 'Tiktok'}Btn`);
+
+    if (statusBadge) {
+        statusBadge.textContent = formatSocialStatus(status, isConnected);
+        statusBadge.className = 'text-[11px] uppercase tracking-wide px-2 py-0.5 rounded-full border';
+        if (isConnected) {
+            statusBadge.classList.add('border-green-600', 'text-green-300', 'bg-green-900', 'bg-opacity-20');
+        } else if (status === 'reauth_required' || status === 'revoked') {
+            statusBadge.classList.add('border-yellow-600', 'text-yellow-300', 'bg-yellow-900', 'bg-opacity-20');
+        } else if (status === 'disconnected') {
+            statusBadge.classList.add('border-gray-500', 'text-gray-300');
+        } else {
+            statusBadge.classList.add('border-gray-500', 'text-gray-300');
+        }
+    }
+
+    if (summaryEl) {
+        if (!account) {
+            summaryEl.textContent = `No ${label} account connected yet.`;
+        } else if (account.username) {
+            summaryEl.textContent = `${label} account: @${account.username}`;
+        } else if (account.displayName) {
+            summaryEl.textContent = `${label} account: ${account.displayName}`;
+        } else {
+            summaryEl.textContent = `${label} account connected.`;
+        }
+    }
+
+    if (metaEl) {
+        if (!account) {
+            metaEl.textContent = `Connect ${label} to manage future StoryTeller publishing from your own account.`;
+        } else if (account.connectedAt) {
+            const connectedDate = new Date(account.connectedAt);
+            const readableDate = Number.isNaN(connectedDate.getTime())
+                ? account.connectedAt
+                : connectedDate.toLocaleString();
+            metaEl.textContent = `Status: ${formatSocialStatus(status, isConnected)}${account.hasRefreshToken ? ' • Refresh token available' : ''} • Connected ${readableDate}`;
+        } else {
+            metaEl.textContent = `Status: ${formatSocialStatus(status, isConnected)}${account.hasRefreshToken ? ' • Refresh token available' : ''}`;
+        }
+    }
+
+    if (connectBtn) {
+        connectBtn.textContent = socialAccountUiState.actionPlatform === platform ? `${label}...` : 'Connect';
+        connectBtn.disabled = isBusy;
+        connectBtn.classList.toggle('hidden', Boolean(account));
+        connectBtn.classList.toggle('opacity-60', connectBtn.disabled);
+        connectBtn.classList.toggle('cursor-not-allowed', connectBtn.disabled);
+    }
+
+    if (reconnectBtn) {
+        reconnectBtn.classList.toggle('hidden', !shouldShowReconnect);
+        reconnectBtn.textContent = socialAccountUiState.actionPlatform === platform ? 'Connecting…' : 'Reconnect';
+        reconnectBtn.disabled = isBusy;
+        reconnectBtn.classList.toggle('opacity-60', reconnectBtn.disabled);
+        reconnectBtn.classList.toggle('cursor-not-allowed', reconnectBtn.disabled);
+    }
+
+    if (disconnectBtn) {
+        disconnectBtn.classList.toggle('hidden', !canDisconnect);
+        disconnectBtn.textContent = socialAccountUiState.disconnectingPlatform === platform ? 'Disconnecting…' : 'Disconnect';
+        disconnectBtn.disabled = isBusy;
+        disconnectBtn.classList.toggle('opacity-60', disconnectBtn.disabled);
+        disconnectBtn.classList.toggle('cursor-not-allowed', disconnectBtn.disabled);
+    }
+}
+
+function updateSocialConnectionStatus() {
+    SUPPORTED_SOCIAL_PLATFORMS.forEach(updateSocialPlatformCard);
+    updateSocialRefreshButton();
+}
+
+async function loadSocialAccountsStatus(force = false) {
+    if (socialAccountsRequestInFlight && !force) {
+        return socialAccountsRequestInFlight;
+    }
+
+    const currentUser = auth.currentUser;
+    if (!currentUser) {
+        appState.setUserProfile(createDefaultSocialAccountsState());
+        updateSocialConnectionStatus();
+        return createDefaultSocialAccountsState();
+    }
+
+    socialAccountsRequestInFlight = (async () => {
+        const idToken = await currentUser.getIdToken();
+        const response = await fetch('/api/social/accounts', {
+            headers: {
+                'Authorization': `Bearer ${idToken}`
+            }
+        });
+
+        const payload = await response.json().catch(() => ({}));
+        if (!response.ok) {
+            throw new Error(payload.error || 'Failed to load connected accounts');
+        }
+
+        appState.setUserProfile({
+            socialAccounts: Array.isArray(payload.accounts) ? payload.accounts : [],
+            socialPlatforms: payload.platforms || createDefaultSocialPlatforms(),
+            socialPlatformConfigs: payload.platformConfigs || createDefaultSocialPlatformConfigs()
+        });
+        updateSocialConnectionStatus();
+        return payload;
+    })();
+
+    try {
+        return await socialAccountsRequestInFlight;
+    } finally {
+        socialAccountsRequestInFlight = null;
+    }
+}
+
+function getPopupFeatures(width = 560, height = 720) {
+    const left = Math.max(0, Math.round((window.screen.width - width) / 2));
+    const top = Math.max(0, Math.round((window.screen.height - height) / 2));
+    return `width=${width},height=${height},left=${left},top=${top},resizable=yes,scrollbars=yes`;
+}
+
+function waitForSocialOAuthResult(platform, authWindow) {
+    return new Promise((resolve, reject) => {
+        let pollTimer = null;
+
+        function cleanup() {
+            window.removeEventListener('message', handleMessage);
+            if (pollTimer) clearInterval(pollTimer);
+        }
+
+        function handleMessage(event) {
+            if (event.origin !== window.location.origin) return;
+            if (!event.data || !String(event.data.type || '').startsWith('social-oauth-')) return;
+            if (event.data.platform !== platform) return;
+
+            cleanup();
+            if (authWindow && !authWindow.closed) authWindow.close();
+
+            if (event.data.type === 'social-oauth-success') {
+                resolve(event.data);
+            } else {
+                reject(new Error(event.data.error || `Failed to connect ${getSocialPlatformLabel(platform)}`));
+            }
+        }
+
+        pollTimer = setInterval(() => {
+            if (authWindow && authWindow.closed) {
+                cleanup();
+                reject(new Error(`${getSocialPlatformLabel(platform)} connection window was closed before it finished.`));
+            }
+        }, 400);
+
+        window.addEventListener('message', handleMessage);
+    });
+}
+
+async function startSocialConnect(platform) {
+    const currentUser = auth.currentUser;
+    if (!currentUser) {
+        alert('Please sign in before connecting an account.');
+        return;
+    }
+
+    socialAccountUiState = { ...socialAccountUiState, actionPlatform: platform };
+    setSocialAccountsFeedback(`Starting ${getSocialPlatformLabel(platform)} connection…`);
+    updateSocialConnectionStatus();
+
+    try {
+        const idToken = await currentUser.getIdToken();
+        const response = await fetch(`/api/social/${platform}/connect/start`, {
+            method: 'POST',
+            headers: {
+                'Authorization': `Bearer ${idToken}`,
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({
+                redirectPath: window.location.pathname,
+            })
+        });
+
+        const payload = await response.json().catch(() => ({}));
+        if (!response.ok) {
+            throw new Error(payload.error || `Failed to start ${getSocialPlatformLabel(platform)} connection`);
+        }
+
+        const authWindow = window.open(
+            payload.authorizeUrl,
+            `${platform}Connect`,
+            getPopupFeatures()
+        );
+
+        if (!authWindow) {
+            throw new Error('Popup blocked. Please allow popups and try again.');
+        }
+
+        const result = await waitForSocialOAuthResult(platform, authWindow);
+        await loadSocialAccountsStatus(true);
+        const connectedLabel = result?.account?.username
+            ? `@${result.account.username}`
+            : (result?.account?.displayName || getSocialPlatformLabel(platform));
+        setSocialAccountsFeedback(`${getSocialPlatformLabel(platform)} connected: ${connectedLabel}`, 'success');
+    } catch (error) {
+        console.error(`Error connecting ${platform}:`, error);
+        setSocialAccountsFeedback(error.message || `Failed to connect ${getSocialPlatformLabel(platform)}`, 'error');
+        alert(error.message || `Failed to connect ${getSocialPlatformLabel(platform)}`);
+    } finally {
+        socialAccountUiState = { ...socialAccountUiState, actionPlatform: null };
+        updateSocialConnectionStatus();
+    }
+}
+
+async function disconnectSocialAccount(platform) {
+    const platformState = getSocialPlatformState(platform);
+    const account = platformState.account || null;
+    if (!account?.socialAccountId) return;
+
+    const label = getSocialPlatformLabel(platform);
+    if (!confirm(`Disconnect your ${label} account from StoryTeller?`)) {
+        return;
+    }
+
+    socialAccountUiState = { ...socialAccountUiState, disconnectingPlatform: platform };
+    setSocialAccountsFeedback(`Disconnecting ${label}…`);
+    updateSocialConnectionStatus();
+
+    try {
+        const currentUser = auth.currentUser;
+        if (!currentUser) throw new Error('Please sign in before disconnecting an account.');
+
+        const idToken = await currentUser.getIdToken();
+        const response = await fetch(`/api/social/accounts/${encodeURIComponent(account.socialAccountId)}`, {
+            method: 'DELETE',
+            headers: {
+                'Authorization': `Bearer ${idToken}`
+            }
+        });
+        const payload = await response.json().catch(() => ({}));
+        if (!response.ok) {
+            throw new Error(payload.error || `Failed to disconnect ${label}`);
+        }
+
+        await loadSocialAccountsStatus(true);
+        setSocialAccountsFeedback(`${label} disconnected. You can reconnect it any time.`, 'success');
+    } catch (error) {
+        console.error(`Error disconnecting ${platform}:`, error);
+        setSocialAccountsFeedback(error.message || `Failed to disconnect ${label}`, 'error');
+        alert(error.message || `Failed to disconnect ${label}`);
+    } finally {
+        socialAccountUiState = { ...socialAccountUiState, disconnectingPlatform: null };
+        updateSocialConnectionStatus();
+    }
+}
+
 // Connect Gmail account
 async function connectGmail() {
     try {
@@ -389,6 +781,13 @@ function initializeUserSettings() {
     const userOrganizationInput = document.getElementById('userOrganizationInput');
     const connectGmailBtn = document.getElementById('connectGmailBtn');
     const disconnectGmailBtn = document.getElementById('disconnectGmailBtn');
+    const refreshSocialAccountsBtn = document.getElementById('refreshSocialAccountsBtn');
+    const connectTiktokBtn = document.getElementById('connectTiktokBtn');
+    const reconnectTiktokBtn = document.getElementById('reconnectTiktokBtn');
+    const disconnectTiktokBtn = document.getElementById('disconnectTiktokBtn');
+    const connectInstagramBtn = document.getElementById('connectInstagramBtn');
+    const reconnectInstagramBtn = document.getElementById('reconnectInstagramBtn');
+    const disconnectInstagramBtn = document.getElementById('disconnectInstagramBtn');
     
     userSettingsBtn?.addEventListener('click', () => {
         appState.setUserSettingsPanelOpen(true);
@@ -426,6 +825,32 @@ function initializeUserSettings() {
     // Gmail OAuth event listeners
     connectGmailBtn?.addEventListener('click', connectGmail);
     disconnectGmailBtn?.addEventListener('click', disconnectGmail);
+
+    refreshSocialAccountsBtn?.addEventListener('click', async () => {
+        socialAccountUiState = { ...socialAccountUiState, isLoading: true };
+        updateSocialConnectionStatus();
+        setSocialAccountsFeedback('Refreshing connected accounts…');
+        try {
+            await loadSocialAccountsStatus(true);
+            setSocialAccountsFeedback('Connected accounts refreshed.', 'success');
+        } catch (error) {
+            console.error('Error refreshing connected accounts:', error);
+            setSocialAccountsFeedback(error.message || 'Failed to refresh connected accounts', 'error');
+        } finally {
+            socialAccountUiState = { ...socialAccountUiState, isLoading: false };
+            updateSocialConnectionStatus();
+        }
+    });
+
+    connectTiktokBtn?.addEventListener('click', () => startSocialConnect('tiktok'));
+    reconnectTiktokBtn?.addEventListener('click', () => startSocialConnect('tiktok'));
+    disconnectTiktokBtn?.addEventListener('click', () => disconnectSocialAccount('tiktok'));
+
+    connectInstagramBtn?.addEventListener('click', () => startSocialConnect('instagram'));
+    reconnectInstagramBtn?.addEventListener('click', () => startSocialConnect('instagram'));
+    disconnectInstagramBtn?.addEventListener('click', () => disconnectSocialAccount('instagram'));
+
+    updateSocialConnectionStatus();
 }
 
 // Expose functions globally

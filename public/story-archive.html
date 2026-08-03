@@ -1,0 +1,359 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>StoryTeller — My Archive</title>
+  <link rel="icon" type="image/png" href="/saylogo.png">
+
+  <script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-auth-compat.js"></script>
+  <script src="js/firebase-config.js"></script>
+
+  <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,400;0,500;0,700;1,400;1,500&family=Inter:wght@300;400;500&display=swap" rel="stylesheet">
+
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --bg:      #F3EDD8;
+      --bg-card: #EAE3CC;
+      --text:    #1C1610;
+      --muted:   #7A6E5B;
+      --border:  #D9D0B8;
+      --ink:     #2C3C6A;
+      --fd:      'Playfair Display', Georgia, serif;
+      --fu:      'Inter', system-ui, sans-serif;
+      --nav:     56px;
+    }
+
+    html, body { height: 100%; background: var(--bg); color: var(--text); font-family: var(--fu); -webkit-font-smoothing: antialiased; overflow-x: hidden; }
+
+    @keyframes fadeUp { from { opacity: 0; transform: translateY(12px); } to { opacity: 1; transform: translateY(0); } }
+    .fade-in { animation: fadeUp 0.4s ease both; }
+    @keyframes pulse { 0%, 100% { opacity: 0.3; transform: scale(0.8); } 50% { opacity: 1; transform: scale(1); } }
+
+    /* ── NAV ─────────────────────────────────────────────────── */
+    .app-nav {
+      position: fixed; top: 0; left: 0; right: 0;
+      height: var(--nav);
+      padding: 0 2rem;
+      display: flex; align-items: center; justify-content: space-between;
+      background: var(--bg);
+      border-bottom: 1px solid var(--border);
+      z-index: 100;
+    }
+    .nav-mark { font-family: var(--fd); font-weight: 700; font-size: 1.0625rem; letter-spacing: -0.01em; }
+    .nav-right { display: flex; align-items: center; gap: 1.25rem; }
+    .nav-link { font-size: 0.875rem; color: var(--muted); text-decoration: none; background: none; border: none; cursor: pointer; transition: color 0.15s; font-family: var(--fu); }
+    .nav-link:hover { color: var(--text); }
+
+    /* ── PAGE VIEWS ──────────────────────────────────────────── */
+    .page-view {
+      display: none;
+      min-height: 100dvh;
+      padding: calc(var(--nav) + 3rem) 1.5rem 4rem;
+    }
+    .page-view.active { display: block; }
+
+    /* ── LOADING ─────────────────────────────────────────────── */
+    #view-loading {
+      display: none;
+      flex-direction: column; align-items: center; justify-content: center;
+      min-height: 100dvh; padding: calc(var(--nav) + 2rem) 1.5rem 4rem;
+      text-align: center;
+    }
+    #view-loading.active { display: flex; }
+
+    .page-hl { font-family: var(--fd); font-style: italic; font-size: 1.75rem; font-weight: 400; letter-spacing: -0.02em; margin-bottom: 0.75rem; }
+    .page-sub { font-size: 0.9375rem; color: var(--muted); line-height: 1.65; max-width: 340px; }
+    .pulse-dots { display: flex; gap: 0.5rem; margin-top: 2.5rem; align-items: center; justify-content: center; }
+    .pulse-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--ink); opacity: 0.3; animation: pulse 1.4s ease-in-out infinite; }
+    .pulse-dot:nth-child(2) { animation-delay: 0.2s; }
+    .pulse-dot:nth-child(3) { animation-delay: 0.4s; }
+
+    /* ── STORIES GRID ────────────────────────────────────────── */
+    .archive-wrap { max-width: 800px; margin: 0 auto; }
+    .archive-eyebrow {
+      font-size: 0.6875rem; font-weight: 500; letter-spacing: 0.1em;
+      text-transform: uppercase; color: var(--ink); margin-bottom: 1.25rem;
+    }
+    .archive-hl { font-family: var(--fd); font-size: 2rem; font-weight: 500; letter-spacing: -0.025em; margin-bottom: 0.75rem; }
+    .archive-sub { font-size: 0.9375rem; color: var(--muted); line-height: 1.6; margin-bottom: 2.5rem; }
+
+    .story-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+      gap: 1rem;
+    }
+
+    .story-card {
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: 16px;
+      overflow: hidden;
+      cursor: pointer;
+      text-decoration: none;
+      color: inherit;
+      display: block;
+      transition: transform 0.15s, box-shadow 0.15s;
+    }
+    .story-card:hover { transform: translateY(-2px); box-shadow: 0 8px 24px rgba(0,0,0,0.08); }
+
+    .card-thumb {
+      aspect-ratio: 9 / 16;
+      overflow: hidden;
+      background: var(--border);
+      position: relative;
+    }
+    .card-thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
+    .card-thumb-placeholder {
+      aspect-ratio: 9 / 16;
+      display: flex; align-items: center; justify-content: center;
+      color: var(--muted); background: var(--bg-card);
+    }
+
+    .card-body { padding: 0.875rem 1rem 1.125rem; }
+    .card-status {
+      display: inline-block;
+      font-size: 0.6875rem; font-weight: 500; letter-spacing: 0.06em;
+      text-transform: uppercase;
+      color: var(--ink); margin-bottom: 0.5rem;
+    }
+    .card-status.in-progress { color: var(--muted); }
+    .card-prompt {
+      font-size: 0.875rem; line-height: 1.5; margin-bottom: 0.5rem;
+      overflow: hidden; display: -webkit-box;
+      -webkit-line-clamp: 2; -webkit-box-orient: vertical;
+    }
+    .card-date { font-size: 0.8125rem; color: var(--muted); }
+    .card-publish-summary {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.35rem;
+      margin-top: 0.7rem;
+    }
+    .card-publish-pill {
+      display: inline-flex;
+      align-items: center;
+      padding: 0.22rem 0.5rem;
+      border-radius: 999px;
+      border: 1px solid var(--border);
+      font-size: 0.625rem;
+      font-weight: 600;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      background: rgba(255,255,255,0.35);
+      color: var(--text);
+    }
+    .card-publish-pill.pending {
+      border-color: #7A6E5B;
+      background: rgba(122, 110, 91, 0.12);
+      color: #55493B;
+    }
+    .card-publish-pill.success {
+      border-color: #668455;
+      background: rgba(102, 132, 85, 0.12);
+      color: #446137;
+    }
+    .card-publish-pill.error {
+      border-color: #8C3B2A;
+      background: rgba(140, 59, 42, 0.12);
+      color: #8C3B2A;
+    }
+
+    /* ── ARCHIVE FOOTER ──────────────────────────────────────── */
+    .archive-footer { margin-top: 3rem; text-align: center; }
+    .btn-cta {
+      display: inline-block; padding: 1rem 2rem;
+      background: var(--ink); color: #fff; border: none; border-radius: 100px;
+      font-family: var(--fu); font-size: 1rem; font-weight: 500;
+      cursor: pointer; text-align: center; text-decoration: none;
+      transition: opacity 0.15s;
+    }
+    .btn-cta:hover { opacity: 0.85; }
+
+    /* ── EMPTY ───────────────────────────────────────────────── */
+    #view-empty {
+      display: none;
+      flex-direction: column; align-items: center; justify-content: center;
+      min-height: 100dvh; padding: calc(var(--nav) + 2rem) 1.5rem 4rem;
+      text-align: center;
+    }
+    #view-empty.active { display: flex; }
+    .empty-hl { font-family: var(--fd); font-style: italic; font-size: 2rem; font-weight: 400; letter-spacing: -0.025em; margin-bottom: 0.875rem; }
+    .empty-sub { font-size: 0.9375rem; color: var(--muted); line-height: 1.65; max-width: 320px; margin-bottom: 2.5rem; }
+
+    /* ── ERROR ───────────────────────────────────────────────── */
+    #view-error {
+      display: none;
+      flex-direction: column; align-items: center; justify-content: center;
+      min-height: 100dvh; padding: calc(var(--nav) + 2rem) 1.5rem 4rem;
+      text-align: center;
+    }
+    #view-error.active { display: flex; }
+    .error-hl { font-family: var(--fd); font-size: 1.5rem; font-weight: 400; letter-spacing: -0.02em; margin-bottom: 0.875rem; }
+    .error-sub { font-size: 0.9375rem; color: var(--muted); line-height: 1.65; margin-bottom: 2rem; }
+    .btn-retry {
+      padding: 0.875rem 1.75rem; border: 1px solid var(--border); border-radius: 100px;
+      background: transparent; color: var(--text); font-family: var(--fu); font-size: 0.9375rem;
+      cursor: pointer; transition: border-color 0.15s;
+    }
+    .btn-retry:hover { border-color: var(--text); }
+  </style>
+</head>
+<body>
+
+  <nav class="app-nav">
+    <span class="nav-mark">StoryTeller</span>
+    <div class="nav-right">
+      <a href="/story.html" class="nav-link">New story</a>
+      <button class="nav-link" id="signOutBtn">Sign out</button>
+    </div>
+  </nav>
+
+  <!-- Loading -->
+  <div id="view-loading" class="active">
+    <h1 class="page-hl">Your stories</h1>
+    <div class="pulse-dots">
+      <div class="pulse-dot"></div>
+      <div class="pulse-dot"></div>
+      <div class="pulse-dot"></div>
+    </div>
+  </div>
+
+  <!-- Stories grid -->
+  <div id="view-stories" class="page-view">
+    <div class="archive-wrap fade-in">
+      <p class="archive-eyebrow">Your archive</p>
+      <h1 class="archive-hl">Your stories</h1>
+      <p class="archive-sub">Every story you've told, ready to watch and share.</p>
+      <div class="story-grid" id="storyGrid"></div>
+      <div class="archive-footer">
+        <a href="/story.html" class="btn-cta">Tell a new story →</a>
+      </div>
+    </div>
+  </div>
+
+  <!-- Empty -->
+  <div id="view-empty">
+    <h1 class="empty-hl">No stories yet.</h1>
+    <p class="empty-sub">Your recorded stories will appear here. Tell your first one — it only takes a few minutes.</p>
+    <a href="/story.html" class="btn-cta">Start your first story →</a>
+  </div>
+
+  <!-- Error -->
+  <div id="view-error">
+    <h2 class="error-hl">Couldn't load your stories</h2>
+    <p class="error-sub">Something went wrong. Please try again.</p>
+    <button class="btn-retry" id="retryBtn">Try again</button>
+  </div>
+
+  <script>
+    let currentUser = null;
+
+    function showView(name) {
+      document.getElementById('view-loading').classList.toggle('active', name === 'loading');
+      document.getElementById('view-stories').classList.toggle('active', name === 'stories');
+      document.getElementById('view-empty').classList.toggle('active', name === 'empty');
+      document.getElementById('view-error').classList.toggle('active', name === 'error');
+    }
+
+    function formatDate(isoString) {
+      if (!isoString) return '';
+      try {
+        return new Date(isoString).toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' });
+      } catch { return ''; }
+    }
+
+    function statusLabel(status) {
+      if (status === 'final_recorded' || status === 'shared') return { text: 'Recorded', cls: '' };
+      if (status === 'analyzed') return { text: 'Notes ready', cls: '' };
+      return { text: 'In progress', cls: 'in-progress' };
+    }
+
+    function publishSummaryLabel(summary) {
+      const platform = summary.platform === 'instagram' ? 'IG' : 'TikTok';
+      if (summary.status === 'completed') return { text: platform + ' published', tone: 'success' };
+      if (summary.status === 'awaiting_user_action') return { text: platform + ' ready', tone: 'success' };
+      if (summary.status === 'failed') return { text: platform + ' failed', tone: 'error' };
+      return { text: platform + ' publishing', tone: 'pending' };
+    }
+
+    function buildCard(story) {
+      const a = document.createElement('a');
+      a.className = 'story-card';
+      a.href = '/story-result.html?storyId=' + encodeURIComponent(story.id);
+
+      const { text: statusText, cls: statusCls } = statusLabel(story.status);
+
+      const thumbHtml = story.thumbnailSignedUrl
+        ? `<div class="card-thumb"><img src="${story.thumbnailSignedUrl}" alt="Story thumbnail" loading="lazy"></div>`
+        : `<div class="card-thumb-placeholder"><svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M15 10l4.553-2.069A1 1 0 0121 8.869v6.262a1 1 0 01-1.447.894L15 14"/><rect x="2" y="6" width="13" height="12" rx="2" ry="2"/></svg></div>`;
+
+      const dateStr = formatDate(story.createdAt);
+      const promptStr = story.promptText ? story.promptText : 'Untitled story';
+      const publishSummary = Array.isArray(story.publishSummary) ? story.publishSummary.slice(0, 2) : [];
+      const publishSummaryHtml = publishSummary.length
+        ? `<div class="card-publish-summary">${publishSummary.map((summary) => {
+          const label = publishSummaryLabel(summary);
+          return `<span class="card-publish-pill ${label.tone}">${label.text}</span>`;
+        }).join('')}</div>`
+        : '';
+
+      a.innerHTML = `
+        ${thumbHtml}
+        <div class="card-body">
+          <span class="card-status ${statusCls}">${statusText}</span>
+          <p class="card-prompt">${promptStr}</p>
+          ${dateStr ? `<p class="card-date">${dateStr}</p>` : ''}
+          ${publishSummaryHtml}
+        </div>
+      `;
+      return a;
+    }
+
+    function renderStories(stories) {
+      if (!stories || stories.length === 0) {
+        showView('empty');
+        return;
+      }
+      const grid = document.getElementById('storyGrid');
+      grid.innerHTML = '';
+      stories.forEach(story => grid.appendChild(buildCard(story)));
+      showView('stories');
+    }
+
+    async function loadStories(user) {
+      showView('loading');
+      try {
+        const token = await user.getIdToken();
+        const resp = await fetch('/api/stories', {
+          headers: { Authorization: 'Bearer ' + token },
+        });
+        if (!resp.ok) throw new Error('HTTP ' + resp.status);
+        const data = await resp.json();
+        renderStories(data.stories || []);
+      } catch (err) {
+        console.error('[story-archive] load error:', err);
+        showView('error');
+      }
+    }
+
+    document.getElementById('retryBtn').addEventListener('click', () => {
+      if (currentUser) loadStories(currentUser);
+    });
+
+    document.getElementById('signOutBtn').addEventListener('click', () => {
+      firebase.auth().signOut().then(() => { window.location.href = '/story.html'; });
+    });
+
+    firebase.auth().onAuthStateChanged(user => {
+      if (!user) { window.location.href = '/story.html'; return; }
+      currentUser = user;
+      loadStories(user);
+    });
+  </script>
+
+</body>
+</html>

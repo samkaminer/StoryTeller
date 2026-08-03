@@ -41,7 +41,7 @@ describe('questionGeneration Claude API Integration', () => {
             // Construct the request body as the production code does
             // Note: max_tokens must be greater than thinking.budget_tokens
             const requestBody = {
-                model: "claude-opus-4-5",
+                model: "claude-opus-4-7",
                 max_tokens: 2048, // Must be > budget_tokens
                 messages: messages,
                 temperature: 1,
@@ -125,7 +125,7 @@ describe('questionGeneration Claude API Integration', () => {
             });
 
             const requestBody = {
-                model: "claude-opus-4-5",
+                model: "claude-opus-4-7",
                 max_tokens: 2048, // Must be > budget_tokens
                 messages: messages,
                 temperature: 1,
@@ -206,7 +206,7 @@ describe('questionGeneration Claude API Integration', () => {
             });
 
             const requestBody = {
-                model: "claude-opus-4-5",
+                model: "claude-opus-4-7",
                 max_tokens: 2048, // Must be > budget_tokens
                 messages: messages,
                 temperature: 1,
@@ -274,7 +274,7 @@ describe('questionGeneration Claude API Integration', () => {
             ];
 
             const requestBody = {
-                model: "claude-opus-4-5",
+                model: "claude-opus-4-7",
                 max_tokens: 2048, // Must be > budget_tokens
                 messages: messages,
                 temperature: 1,

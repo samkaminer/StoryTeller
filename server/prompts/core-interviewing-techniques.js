@@ -80,6 +80,30 @@ const THINKING_TRACE_INSTRUCTIONS = `USE YOUR THINKING TO STAY ON TASK:
 
 The goal is a natural conversation that *happens to* cover the required information - not an interrogation, but also not a meandering chat that misses the point.`;
 
+// Story-mode thinking trace — used when requiredInformation is empty (narrative sessions
+// where the respondent IS the subject, not a source of information about someone else).
+// The generic THINKING_TRACE_INSTRUCTIONS actively suppresses emotional/relational questions
+// by labelling them "zero value" and flagging them as drift — wrong for story mode.
+const STORY_THINKING_TRACE_INSTRUCTIONS = `USE YOUR THINKING TO STAY ON TRACK:
+
+**1. STORY INVENTORY** - Before each question, assess:
+   - Who is this story about? Name the central figure and hold them as the primary thread.
+   - Has the relationship between the storyteller and the central figure been established? (One exchange is enough — once you know who they are, move on.)
+   - How many consecutive exchanges have stayed on the same beat or the same person without the story moving forward?
+   - Where is the story in its arc — early scene-setting, middle development, emotional peak, or winding down?
+
+**2. EVALUATE CANDIDATE QUESTIONS** - Balance two equally important values:
+   - Relational/emotional value: Does this question deepen understanding of what the storyteller felt or what was at stake?
+   - Momentum value: Does this advance the story forward in time or open new territory?
+   These are co-equal. Neither dominates. After 1-2 exchanges grounding the relationship, lean toward momentum.
+
+**3. STORY DRIFT CHECK** - Ask yourself both:
+   - Am I about to ask about a background character when the central figure hasn't been grounded yet? → Return to the central figure.
+   - Have I asked 2+ questions about the same person or the same emotional beat without advancing the story? → Push the story forward.
+   Both directions are drift. Emotional looping is as much a failure as logistical shallowness.
+
+**4. STAKES CHECK** - If a named person appears who seems central and their relationship to the storyteller is completely unknown, ask who they are first. This is a one-time grounding move — not a recurring thread. Once the relationship is named, advance the story.`;
+
 const QUESTION_FORMAT_INSTRUCTIONS = `OUTPUT RULES:
 - ONLY output the question itself. No preamble, no "I'd like to ask...", no explanation.
 - Keep it under 200 characters.
@@ -151,9 +175,14 @@ function assembleInterviewPrompt(config) {
         prompt += `FROM PREVIOUS CONVERSATIONS:\n${memoryContext}\n\n`;
     }
 
-    // Add thinking instructions for follow-ups
+    // Add thinking instructions for follow-ups.
+    // Use the story-specific trace when requiredInformation is empty — the reliable signal
+    // that this is a narrative session where the respondent IS the subject, not a source
+    // of information about someone else. The generic trace labels emotional/relational
+    // questions as "zero value drift", which actively breaks story-mode interviews.
     if (isFollowUp && enableThinking) {
-        prompt += THINKING_TRACE_INSTRUCTIONS + '\n\n';
+        const isStoryMode = !requiredInformation || requiredInformation.length === 0;
+        prompt += (isStoryMode ? STORY_THINKING_TRACE_INSTRUCTIONS : THINKING_TRACE_INSTRUCTIONS) + '\n\n';
     }
 
     // Add question format instructions
@@ -177,6 +206,7 @@ function extractCustomGuidance(fullFollowupPrompt) {
 module.exports = {
     CORE_INTERVIEWING_TECHNIQUES,
     THINKING_TRACE_INSTRUCTIONS,
+    STORY_THINKING_TRACE_INSTRUCTIONS,
     QUESTION_FORMAT_INSTRUCTIONS,
     formatRequiredInformation,
     assembleInterviewPrompt,
